@@ -5,7 +5,6 @@
 > **本仓库定位**：fork 自 [skyzh/mini-lsm](https://github.com/skyzh/mini-lsm)，作为课程**阶段 Ⅰ** 的项目底座。
 > 小组在此基础上增加鉴权、简单的 WAL 加密等上层模块，**不改动底层 LSM 核心**。
 > 相对上游已完成：教程与代码注释全量中文化、Windows 平台编译与测试修复、符号链接展开。
-> 英文原版说明见 [README.en.md](./README.en.md)。
 
 Mini-LSM 是一门面向系统与后端方向的数据库内核实践课：从内存表（memtable）和 SSTable 出发，
 一路做到压缩（compaction）、崩溃恢复、多版本并发控制（MVCC）与事务。三周之后你会得到一个
