@@ -12,19 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
+#![allow(unused_variables)] // TODO(you): 实现该模块后删除此 lint
+#![allow(dead_code)] // TODO(you): 实现该模块后删除此 lint
 
 use anyhow::Result;
 
 use super::StorageIterator;
 
-/// Merges two iterators of different types into one. If the two iterators have the same key, only
-/// produce the key once and prefer the entry from A.
+/// 把两个不同类型的迭代器归并成一个。如果两个迭代器含有相同的键，该键只输出一次，
+/// 并优先采用 A 中的条目。
 pub struct TwoMergeIterator<A: StorageIterator, B: StorageIterator> {
     a: A,
     b: B,
-    // Add fields as need
+    // 按需添加字段
 }
 
 impl<

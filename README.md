@@ -1,140 +1,176 @@
-![Mini-LSM: Learn database internals by building an LSM storage engine in Rust](./mini-lsm-book/src/mini-lsm-banner.svg)
+![Mini-LSM: 用 Rust 构建数据库存储引擎](./mini-lsm-book/src/mini-lsm-banner.svg)
 
-# Mini-LSM: Build a Database Storage Engine in Rust
+# Mini-LSM 中文版：用 Rust 构建数据库存储引擎
 
-[![CI (main)](https://github.com/skyzh/mini-lsm/actions/workflows/main.yml/badge.svg)](https://github.com/skyzh/mini-lsm/actions/workflows/main.yml)
+> **本仓库定位**：fork 自 [skyzh/mini-lsm](https://github.com/skyzh/mini-lsm)，作为课程**阶段 Ⅰ** 的项目底座。
+> 小组在此基础上增加鉴权、简单的 WAL 加密等上层模块，**不改动底层 LSM 核心**。
+> 相对上游已完成：教程与代码注释全量中文化、Windows 平台编译与测试修复、符号链接展开。
+> 英文原版说明见 [README.en.md](./README.en.md)。
 
-Mini-LSM is a hands-on course in database internals for systems and backend engineers. Build an LSM-tree storage engine from memtables and SSTs through compaction, crash recovery, MVCC, and transactions.
+Mini-LSM 是一门面向系统与后端方向的数据库内核实践课：从内存表（memtable）和 SSTable 出发，
+一路做到压缩（compaction）、崩溃恢复、多版本并发控制（MVCC）与事务。三周之后你会得到一个
+可以真正跑起来的 LSM-Tree 存储引擎。
 
-**[Start the guided three-week course](https://skyzh.github.io/mini-lsm)** · **[Try the coding-agent track](https://skyzh.github.io/mini-lsm/agent-fast-forward-overview.html)**
+- 中文教程（mdBook 源文件）：[mini-lsm-book/src](./mini-lsm-book/src/SUMMARY.md)
+- 翻译与代码风格约定：[docs/translation-guide.md](./docs/translation-guide.md)
+- 阶段 Ⅰ 扩展指南（鉴权 + WAL 加密）：[docs/阶段一扩展指南.md](./docs/阶段一扩展指南.md)
 
-Week 1 produces a working storage engine. Weeks 2 and 3 add production-inspired compaction, durability, concurrency control, and multi-version transactions.
+## 三周之后你的引擎具备什么
 
-## What You Will Build
+* 一个有序的内存写入缓冲（可写内存表 + 只读内存表）与不可变 SSTable 文件；
+* 跨越内存与磁盘的归并视图，支持点查与范围扫描；
+* 多种压缩策略（simple leveled / tiered / leveled）与后台维护线程；
+* 清单（manifest）与预写日志（WAL），可从崩溃中恢复；
+* 快照、MVCC 垃圾回收、乐观并发控制，以及可串行化校验。
 
-![Mini-LSM course roadmap](./mini-lsm-book/src/lsm-tutorial/00-full-overview.svg)
+Mini-LSM 只覆盖数据库的存储层，不涉及 SQL 解析、查询优化、复制与分布式共识。
 
-By the end of the course, your engine will include:
+## 仓库结构
 
-* an ordered in-memory write buffer and immutable SST files;
-* point lookups and range scans over merged memory and disk state;
-* multiple compaction strategies and background maintenance;
-* a manifest and write-ahead log for crash recovery; and
-* snapshots, MVCC garbage collection, optimistic concurrency control, and serializable validation for tracked keys.
+| 目录 | 内容 |
+| --- | --- |
+| `mini-lsm-starter` | **学生改这里**：留空待实现的骨架代码 |
+| `mini-lsm` | 第 1～2 周的参考实现（含前两周测试用例） |
+| `mini-lsm-mvcc` | 第 3 周 MVCC 的参考实现（含第三周测试用例） |
+| `mini-lsm-book` | 课程正文（mdBook），已中文化 |
+| `xtask` | `cargo x` 子命令：拷测试、跑检查、构建教材 |
+| `scripts` | Windows 下的共享文件同步脚本 |
+| `docs` | 翻译规范、阶段 Ⅰ 扩展指南 |
 
-Mini-LSM focuses on the storage layer of a database. It does not cover SQL parsing, query optimization, replication, or distributed consensus.
+## 快速开始
 
-## Choose a Learning Path
+### 环境要求
 
-| Path | Best for | Format | Status |
-| --- | --- | --- | --- |
-| [Guided course](https://skyzh.github.io/mini-lsm/00-overview.html) | Learners who want to implement and reason through each subsystem | Three weeks, with seven chapters per week | Complete |
-| [Coding-agent track](https://skyzh.github.io/mini-lsm/agent-fast-forward-overview.html) | Learners who want an agent to handle mechanical implementation without outsourcing system design | Three planned days built around decision stops, focused code slices, and adversarial tests | Days 1–3 available |
+* Rust stable，`rustc` ≥ 1.97.1（工作区使用 edition 2024）；
+* Linux / macOS / **Windows** 均可，本分支已在 Windows（MSVC 工具链）上验证编译与全部参考实现测试。
 
-You need basic Rust, but you do not need prior knowledge of LSM trees, compaction, MVCC, or transaction isolation. The course is a good fit if you have used systems such as PostgreSQL, MySQL, Redis, or RocksDB and want to understand what happens below their APIs.
+### 学生：在 `mini-lsm-starter` 里写代码
 
-## Community
-
-You may join skyzh's Discord server and study with the mini-lsm community.
-
-[![Join skyzh's Discord Server](mini-lsm-book/src/discord-badge.svg)](https://skyzh.dev/join/discord)
-
-**Add Your Solution**
-
-If you finished at least one full week of this course, you can add your solution to the community solution list at [SOLUTIONS.md](./SOLUTIONS.md) by submitting a pull request.
-
-## Development
-
-**For Students**
-
-You should modify code in `mini-lsm-starter` directory.
-
-```
-cargo x install-tools
-cargo x copy-test --week 1 --day 1
-cargo x scheck
-cargo run --bin mini-lsm-cli
-cargo run --bin compaction-simulator
+```bash
+cargo x install-tools                  # 安装 cargo-nextest、mdbook（首次运行需要，可选）
+cargo x copy-test --week 1 --day 1     # 把第一周第 1 天的测试用例拷进 starter
+cargo x scheck                         # 在 starter 里跑 fmt + check + test + clippy
+cargo run --bin mini-lsm-cli -- --path ./my.db --compaction leveled --enable-wal
 ```
 
-**For Course Developers**
+`mini-lsm-cli` 是一个 REPL，支持 `put/get/delete/scan/flush/close` 等命令，参数：
 
-You should modify `mini-lsm` and `mini-lsm-mvcc`
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `--path` | `lsm.db` | 数据库目录 |
+| `--compaction` | `leveled` | `simple` / `leveled` / `tiered` / `none` |
+| `--enable-wal` | 关闭 | 打开预写日志（第 2 周第 6 天后才有意义） |
+| `--serializable` | 关闭 | 打开可串行化校验（第 3 周第 6 天后才有意义） |
 
+压缩策略实验台（在内存里模拟压缩效果，不需要真的写盘）：
+
+```bash
+cargo run --bin compaction-simulator-ref
 ```
-cargo x install-tools
-cargo x check
-cargo x book
-```
 
-If you changed public API in the reference solution, you might also need to synchronize it to the starter crate.
-To do this, use `cargo x sync`.
+### 对答案：跑参考实现
 
-## Code Structure
-
-* mini-lsm: the final solution code for <= week 2
-* mini-lsm-mvcc: the final solution code for week 3 MVCC
-* mini-lsm-starter: the starter code
-* mini-lsm-book: the course
-
-We have another repo mini-lsm-solution-checkpoint at [https://github.com/skyzh/mini-lsm-solution-checkpoint](https://github.com/skyzh/mini-lsm-solution-checkpoint). In this repo, each commit corresponds to a chapter in the course. We will not update the solution checkpoint very often.
-
-## Demo
-
-You can run the reference solution by yourself to gain an overview of the system before you start.
-
-```
+```bash
+cargo test -p mini-lsm          # 第 1～2 周参考实现，72 个测试
+cargo test -p mini-lsm-mvcc     # 第 3 周 MVCC 参考实现，96 个测试
 cargo run --bin mini-lsm-cli-ref
 cargo run --bin mini-lsm-cli-mvcc-ref
 ```
 
-And we have a compaction simulator to experiment with your compaction algorithm implementation,
+## 课程目录（中文）
 
+| 周 + 章节 | 主题 |
+| --- | --- |
+| 1.1 | 内存表（[week1-01](./mini-lsm-book/src/week1-01-memtable.md)） |
+| 1.2 | 归并迭代器（[week1-02](./mini-lsm-book/src/week1-02-merge-iterator.md)） |
+| 1.3 | 块（[week1-03](./mini-lsm-book/src/week1-03-block.md)） |
+| 1.4 | SSTable（[week1-04](./mini-lsm-book/src/week1-04-sst.md)） |
+| 1.5 | 读路径（[week1-05](./mini-lsm-book/src/week1-05-read-path.md)） |
+| 1.6 | 写路径（[week1-06](./mini-lsm-book/src/week1-06-write-path.md)） |
+| 1.7 | SST 优化：前缀键编码 + 布隆过滤器（[week1-07](./mini-lsm-book/src/week1-07-sst-optimizations.md)） |
+| 2.1 | 压缩实现（[week2-01](./mini-lsm-book/src/week2-01-compaction.md)） |
+| 2.2 | 简单分层压缩（[week2-02](./mini-lsm-book/src/week2-02-simple.md)） |
+| 2.3 | 分层（tiered）压缩（[week2-03](./mini-lsm-book/src/week2-03-tiered.md)） |
+| 2.4 | 分层（leveled）压缩（[week2-04](./mini-lsm-book/src/week2-04-leveled.md)） |
+| 2.5 | 清单（manifest）（[week2-05](./mini-lsm-book/src/week2-05-manifest.md)） |
+| 2.6 | 预写日志（WAL）（[week2-06](./mini-lsm-book/src/week2-06-wal.md)） |
+| 2.7 | 批量写与校验和（[week2-07](./mini-lsm-book/src/week2-07-snacks.md)） |
+| 3.1 | 时间戳键编码与重构（[week3-01](./mini-lsm-book/src/week3-01-ts-key-refactor.md)） |
+| 3.2 | 快照读：内存表与时间戳（[week3-02](./mini-lsm-book/src/week3-02-snapshot-read-part-1.md)） |
+| 3.3 | 快照读：事务 API（[week3-03](./mini-lsm-book/src/week3-03-snapshot-read-part-2.md)） |
+| 3.4 | 水位线与垃圾回收（[week3-04](./mini-lsm-book/src/week3-04-watermark.md)） |
+| 3.5 | 事务工作区与原子提交（[week3-05](./mini-lsm-book/src/week3-05-txn-occ.md)） |
+| 3.6 | 可串行化校验（[week3-06](./mini-lsm-book/src/week3-06-serializable.md)） |
+| 3.7 | 压缩过滤器（[week3-07](./mini-lsm-book/src/week3-07-compaction-filter.md)） |
+
+构建本地教材（需要 `mdbook`）：
+
+```bash
+cargo x book        # 本地起服务预览
 ```
-cargo run --bin compaction-simulator-ref
-cargo run --bin compaction-simulator-mvcc-ref
-```
 
-## Guided Course Structure
+## 相对上游做了哪些改动
 
-The guided course has three complete weeks.
+| 类别 | 说明 |
+| --- | --- |
+| 中文化 | `mini-lsm-book/src` 全部章节、三个 crate 的代码注释、`README` 均已译为中文；规则见 [docs/translation-guide.md](./docs/translation-guide.md) |
+| Windows 兼容 | 见下表，上游代码在 Windows 上**无法编译、也无法通过测试** |
+| 符号链接 | 上游用 git 符号链接在三个 crate 间共享源文件，Windows 下会退化成「一行路径」的文本文件，本仓库已展开为真实文件，并用 `scripts/sync_shared_files.py` 保持同步 |
+| 文档 | 新增 `docs/阶段一扩展指南.md`（阶段 Ⅰ 的挂载点设计） |
 
-* Week 1: Storage Format + Engine Skeleton
-* Week 2: Compaction and Persistence
-* Week 3: Multi-Version Concurrency Control
-* The Rest of Your Life: Closing chapter with expansion paths
+Windows 兼容修复的具体位置：
 
-| Week + Chapter | Topic                                                       |
-| -------------- | ----------------------------------------------------------- |
-| 1.1            | Memtable                                                    |
-| 1.2            | Merge Iterator                                              |
-| 1.3            | Block                                                       |
-| 1.4            | Sorted String Table (SST)                                   |
-| 1.5            | Read Path                                                   |
-| 1.6            | Write Path                                                  |
-| 1.7            | SST Optimizations: Prefix Key Encoding + Bloom Filters      |
-| 2.1            | Compaction Implementation                                   |
-| 2.2            | Simple Compaction Strategy (Traditional Leveled Compaction) |
-| 2.3            | Tiered Compaction Strategy (RocksDB Universal Compaction)   |
-| 2.4            | Leveled Compaction Strategy (RocksDB Leveled Compaction)    |
-| 2.5            | Manifest                                                    |
-| 2.6            | Write-Ahead Log (WAL)                                       |
-| 2.7            | Batch Write and Checksums                                   |
-| 3.1            | Timestamp Key Encoding                                      |
-| 3.2            | Snapshot Read - Memtables and Timestamps                    |
-| 3.3            | Snapshot Read - Transaction API                             |
-| 3.4            | Watermark and Garbage Collection                            |
-| 3.5            | Transactions and Optimistic Concurrency Control             |
-| 3.6            | Serializable Snapshot Isolation                             |
-| 3.7            | Compaction Filters                                          |
+| 文件 | 问题 | 处理 |
+| --- | --- | --- |
+| `mini-lsm{,-mvcc,-starter}/src/table.rs` | `std::os::unix::fs::FileExt::read_exact_at` 在 Windows 不存在 | 抽出 `read_exact_at` 辅助函数：Unix 用 `pread`，Windows 用 `seek_read` 循环补齐 |
+| 同上（`FileObject::create`） | `File::open` 是只读句柄，`sync_all` 在 Windows 报「拒绝访问」 | 改为读写方式打开后再 `sync_all` |
+| `mini-lsm{,-mvcc}/src/wal.rs`、`manifest.rs` | `O_APPEND` 打开后 `set_len` 缺少 `FILE_WRITE_DATA` 权限，无法截断损坏尾部 | Unix 保留 `append`；Windows 用读写方式打开，读完后 `seek(End(0))` 恢复追加语义 |
+| `mini-lsm{,-mvcc}/src/lsm_storage.rs` | 对目录 `fsync`（`File::open(dir)`）在 Windows 报错 | Unix 保留；Windows 退化为空操作，并在注释中说明理由 |
+| `mini-lsm/src/tests/harness.rs` | `MetadataExt::size()` 是 Unix 扩展 | 改用跨平台的 `Metadata::len()` |
+| `xtask/src/main.rs` | `copy-test` 调用外部 `cp`，Windows 默认 PATH 没有 | 改用 `std::fs::copy` |
 
-## Related Projects
+## 阶段 Ⅰ 的扩展方向
 
-mini-lsm inspired several projects used in production.
+本项目的目标是**在 LSM 核心之上**做加法，两条主线：
 
-* [SlateDB](https://slatedb.io/docs/design/overview/) is an LSM engine over the object storage system.
-* [Tonbo](https://tonbo.io/about) stores parquet files directly on the object storage and organizes them in an LSM tree structure.
+1. **鉴权层**：在 `MiniLsm` 外面包一层 `AuthEngine`，用前缀键实现用户命名空间隔离，
+   权限校验在进入 `put/get/delete/scan` 之前完成；
+2. **WAL 加密**：只改 `wal.rs` 的编解码边界，把明文记录换成「随机 nonce + AEAD 密文」，
+   SST、manifest 与压缩流程完全不动。
 
-## License
+具体的挂载点、需要改哪几个函数、有哪些坑（校验和位置、崩溃恢复的尾部截断、密钥管理），
+见 [docs/阶段一扩展指南.md](./docs/阶段一扩展指南.md)。
 
-The Mini-LSM starter code and solution are under [Apache 2.0 license](LICENSE). The author reserves the full copyright of the course materials (markdown files and figures).
+## 小组协作建议
+
+* 第 1 周：两人分 `mem_table` / `iterators`，一人做 `block` + `table`，一人提前读第 2 章；
+  周末统一跑 `cargo x copy-test --week 1` 全量测试。
+* 第 2 周：压缩策略与 manifest/WAL 两条线并行，注意 `lsm_storage.rs` 是共同热点，改前先在群里认领。
+* 第 3 周：MVCC 建议单人主力，其他人做鉴权层与文档。
+* 合并前跑：`cargo check --workspace --all-targets`、`cargo test -p mini-lsm`、`cargo test -p mini-lsm-mvcc`。
+* 改了共享文件（`mini-lsm-starter/src/debug.rs`、`mini-lsm/src/tests/*` 等）后，记得
+  `python scripts/sync_shared_files.py`，否则另外两个 crate 会编译失败。
+
+## 常见问题
+
+**Q：`mini-lsm-starter` 里到处是 `unimplemented!()`，编译却通过了？**
+这是刻意设计的：骨架能编译、测试会失败，你按章节逐个实现即可。真正跑测试前先
+`cargo x copy-test --week N --day M`。
+
+**Q：`mini-lsm-starter/src/tests` 是空的？**
+测试用例不预置，由 `cargo x copy-test` 按需从参考实现拷入，避免学生看到答案。
+
+**Q：注释里中英文混排？**
+专有名词（SSTable、WAL、memtable、`Week 1 Day 1` 之类的课程定位标记）按翻译规范保留英文，
+便于对照上游与本仓库的 diff。
+
+**Q：重新 clone 上游后出一堆内容是路径的 .rs 文件？**
+那是 git 符号链接在 Windows 下的退化结果。要么在开发者模式下 `git clone -c core.symlinks=true`，
+要么运行 `python scripts/sync_shared_files.py`。
+
+## 许可与致谢
+
+* 代码（`mini-lsm-starter`、参考实现）：[Apache 2.0](./LICENSE)；
+* 课程材料（`mini-lsm-book` 的 markdown 与插图）：版权归原作者 Alex Chi Z 所有，采用
+  CC BY-NC-SA 4.0，中译本同样遵循该协议，**不得用于商业用途**；
+* 原仓库：<https://github.com/skyzh/mini-lsm>，在线教程：<https://skyzh.github.io/mini-lsm/>。

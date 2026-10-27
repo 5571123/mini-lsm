@@ -2,17 +2,17 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Memtable and Merge Iterators (Deprecated)
+# 内存表与归并迭代器（已废弃）
 
 <div class="warning">
 
-This Mini-LSM v1 chapter is no longer maintained. Its instructions have been removed because they do not match the current starter code.
+这个 Mini-LSM v1 章节已不再维护。由于其中的说明与当前的起始代码不一致，相关内容已被移除。
 
-The material now lives in:
+这些内容现在位于：
 
-- [Week 1: Memtables](./week1-01-memtable.md)
-- [Week 1: Merge Iterator](./week1-02-merge-iterator.md)
-- [Week 1: Read Path](./week1-05-read-path.md), which includes the two-way merge
+- [第一周：内存表](./week1-01-memtable.md)
+- [第一周：归并迭代器](./week1-02-merge-iterator.md)
+- [第一周：读路径](./week1-05-read-path.md)，其中包含双向归并
 
 </div>
 

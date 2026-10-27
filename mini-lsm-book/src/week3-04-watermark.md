@@ -2,123 +2,123 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Watermark and Garbage Collection
+# 水位线与垃圾回收
 
-By the end of this chapter, you will be able to:
+本章结束时，你将能够：
 
-* Track the oldest read timestamp still held by a live transaction or iterator.
-* Reclaim obsolete versions without changing any snapshot at or above the watermark.
-* Explain when a bottom-level tombstone and every older value can be removed together.
+* 跟踪仍被存活事务或迭代器持有的最旧读时间戳。
+* 回收废弃版本，同时不改变水位线及以上任何快照的可见结果。
+* 解释底层墓碑和所有更旧的值何时可以一起删除。
 
-To copy and run the test cases:
+复制并运行测试用例：
 
 ```
 cargo x copy-test --week 3 --day 4
 cargo x scheck
 ```
 
-The Day 4 suite also rechecks Day 2's rule that compaction must not split versions of one user key across output SSTs. The live transaction in that test pins the watermark so the completed engine cannot garbage-collect the history being measured.
+第四天的测试套件还会复查第二天的规则：压缩不得把一个用户键的多个版本切分到不同的输出 SST。该测试中的存活事务钉住了水位线，因此完成的引擎无法回收正在被度量的那段历史。
 
-## Before You Begin
+## 开始之前
 
-Retaining every version is correct but unbounded. The watermark is the smallest read timestamp still in use. Compaction may remove history that no transaction at or above that timestamp can distinguish.
+保留每一个版本是正确的，但空间没有上限。水位线是仍在使用中的最小读时间戳。压缩可以删除水位线及以上任何事务都无法区分的历史。
 
-Keep these invariants in mind:
+请记住这些不变量：
 
-1. The tracker counts readers, not only distinct timestamps; dropping one of two readers at the same timestamp must not advance the watermark.
-2. Creating a transaction registers its timestamp before it can race with compaction.
-3. A scan iterator keeps its transaction alive, so abandoning the original transaction handle does not release the watermark early.
-4. Compaction keeps every version above the watermark and the newest version at or below it.
-5. A tombstone at or below the watermark can be removed only when the compaction reaches the bottom level, where no older value can survive outside the task.
+1. 跟踪器统计的是读操作的数量，而不只是不同的时间戳；同一个时间戳上有两个读操作时，丢弃其中一个不得推进水位线。
+2. 创建事务时先注册它的时间戳，然后才可能与压缩发生竞争。
+3. 扫描迭代器让其事务保持存活，因此丢弃原有的事务句柄不会提前释放水位线。
+4. 压缩保留水位线之上的每一个版本，以及等于或低于水位线的最新版本。
+5. 等于或低于水位线的墓碑只有在压缩到达底层时才能删除，因为在那时任务之外不可能有更旧的值存活。
 
-> **Predict before coding:** Readers exist at timestamps 3, 3, and 7. Which drops advance the watermark? For `k@8=v8, k@5=del, k@2=v2` with watermark 5, which versions survive a non-bottom compaction and a bottom-level compaction?
+> **先预测再写代码：** 时间戳 3、3 和 7 上各有读操作存在。哪些读操作结束时推进了水位线？对于 `k@8=v8, k@5=del, k@2=v2` 和水位线 5，在非底层压缩与底层压缩中分别有哪些版本存活？
 
-## Task 1: Implement Watermark
+## 任务 1：实现水位线
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/mvcc/watermark.rs
 ```
 
-`Watermark` tracks the lowest `read_ts` in the system. A new transaction calls `add_reader`; the final owner of that transaction calls `remove_reader` when dropped. `watermark()` returns the lowest active timestamp, or `None` when no snapshot is live.
+`Watermark` 跟踪系统中最低的 `read_ts`。新事务调用 `add_reader`；该事务的最后一个所有者被丢弃时调用 `remove_reader`。`watermark()` 返回最低的活跃时间戳，当没有存活快照时返回 `None`。
 
-A `BTreeMap` can map each `read_ts` to its reader count. Remove entries when their count reaches zero.
+可以用一个 `BTreeMap` 把每个 `read_ts` 映射到它的读操作计数。计数归零时删除对应条目。
 
-## Task 2: Maintain Watermark in Transactions
+## 任务 2：在事务中维护水位线
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/mvcc/txn.rs
 src/mvcc.rs
 ```
 
-Register `read_ts` when a transaction starts and remove it in `Drop`. Because iterators own an `Arc<Transaction>`, the reader remains registered until every handle and iterator is gone.
+事务开始时注册 `read_ts`，并在 `Drop` 中注销。由于迭代器持有一个 `Arc<Transaction>`，直到所有句柄和迭代器都消失，该读操作才会被注销。
 
-## Task 3: Garbage Collection in Compaction
+## 任务 3：压缩中的垃圾回收
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/compact.rs
 ```
 
-Now that we have a watermark for the system, we can clean up unused versions during the compaction process.
+现在系统有了水位线，我们可以在压缩过程中清理不再使用的版本。
 
-* If a version of a key is above watermark, keep it.
-* For all versions of a key below or equal to the watermark, keep the latest version.
+* 如果某个键的版本高于水位线，保留它。
+* 对于某个键所有等于或低于水位线的版本，保留最新的那个。
 
-For example, if we have watermark=3 and the following data:
+例如，如果 watermark=3，数据如下：
 
 ```
-a@4=del <- above watermark
-a@3=3   <- latest version below or equal to watermark
-a@2=2   <- can be removed, no one will read it
-a@1=1   <- can be removed, no one will read it
-b@1=1   <- latest version below or equal to watermark
-c@4=4   <- above watermark
-d@3=del <- can be removed if compacting to bottom-most level
-d@2=2   <- can be removed
+a@4=del <- 位于水位线之上
+a@3=3   <- 等于或低于水位线的最新版本
+a@2=2   <- 可以删除，不会再有人读到
+a@1=1   <- 可以删除，不会再有人读到
+b@1=1   <- 等于或低于水位线的最新版本
+c@4=4   <- 位于水位线之上
+d@3=del <- 压缩到最底层时可以删除
+d@2=2   <- 可以删除
 ```
 
-If we do a compaction over these keys, we will get:
+如果对这些键做一次压缩，我们会得到：
 
 ```
 a@4=del
 a@3=3
 b@1=1
 c@4=4
-d@3=del (can be removed if compacting to bottom-most level)
+d@3=del（压缩到最底层时可以删除）
 ```
 
-Assume these are all keys in the engine. A scan at timestamp 3 returns `a=3,b=1`; `c@4` is still in the future. A scan at timestamp 4 returns `b=1,c=4` because `a@4` is a tombstone. Both results must be identical before and after compaction. Compaction must not affect transactions whose read timestamp is at or above the watermark.
+假设这就是引擎中的全部键。在时间戳 3 上扫描返回 `a=3,b=1`；`c@4` 仍属于未来。在时间戳 4 上扫描返回 `b=1,c=4`，因为 `a@4` 是墓碑。压缩前后这两个结果必须完全相同。压缩不得影响读时间戳等于或高于水位线的事务。
 
-## Chapter Checkpoint
+## 本章检查点
 
-Compaction should now reduce history as the oldest snapshot advances, while every still-live snapshot returns the same values.
+现在，随着最旧快照向前推进，压缩应当减少历史，而每一个仍然存活的快照返回的值保持不变。
 
-Verify these cases explicitly:
+请显式验证这些情况：
 
-1. Hold two transactions at the same oldest timestamp and confirm that dropping only one does not advance the watermark.
-2. Compact the example above at each successive watermark and compare both raw internal versions and user-visible reads.
-3. Keep only a scan iterator alive, compact, and confirm that the iterator's snapshot is still protected.
-4. Compare a tombstone compacted into a middle level with the same tombstone compacted into the bottom level.
+1. 在同一个最旧时间戳上持有两个事务，确认只丢弃其中一个不会推进水位线。
+2. 在上述例子上按逐个推进的水位线做压缩，同时比较原始内部版本和用户可见的读结果。
+3. 只保留一个扫描迭代器存活，执行压缩，确认该迭代器的快照仍然受到保护。
+4. 比较压缩进中间层的墓碑与压缩进底层的同一墓碑。
 
-## Test Your Understanding
+## 检验你的理解
 
-* In our implementation, we manage watermarks by ourselves with the lifecycle of `Transaction` (so-called un-managed mode). If the user intends to manage key timestamps and the watermarks by themselves (i.e., when they have their own timestamp generator), what do you need to do in the write_batch/get/scan API to validate their requests? Is there any architectural assumption we had that might be hard to maintain in this case?
-* Why do we need to store an `Arc` of `Transaction` inside a transaction iterator?
-* What is the condition to fully remove a key from the SST file?
-* For now, we only remove a key when compacting to the bottom-most level. Is there any other prior time that we can remove the key? (Hint: you know the start/end key of each SST in all levels.)
-* Consider the case that the user creates a long-running transaction and we could not garbage collect anything. The user keeps updating a single key. Eventually, there could be a key with thousands of versions in a single SST file. How would it affect performance, and how would you deal with it?
-* Why must compaction keep one version at or below the watermark instead of deleting every version below it?
-* What race appears if a transaction reads the latest timestamp before registering itself with the watermark?
+* 在我们的实现中，我们自己通过 `Transaction` 的生命周期管理水位线（即所谓的非托管模式）。如果用户打算自行管理键时间戳和水位线（即他们有自己的时间戳生成器），你需要在 write_batch/get/scan API 中做什么来校验他们的请求？在这种情况下，我们有哪些架构假设可能难以维持？
+* 为什么我们需要在事务迭代器内部存储 `Transaction` 的 `Arc`？
+* 从一个 SST 文件中彻底删除一个键的条件是什么？
+* 目前我们只在压缩到最底层时才删除键。还有其他更早的时机可以删除该键吗？（提示：你知道所有层中每张 SST 的起始/结束键。）
+* 考虑用户创建一个长期运行的事务、导致我们无法回收任何数据的情况。用户不断更新同一个键。最终，单个 SST 文件中可能出现一个有数千个版本的键。这会如何影响性能，你会如何处理？
+* 为什么压缩必须保留一个等于或低于水位线的版本，而不是删除它下面的每一个版本？
+* 如果事务在向水位线注册自己之前先读取最新时间戳，会出现什么竞争？
 
-Use the [Week 3 end-of-week self-check](./week3-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs.
+用[第三周周末自检](./week3-overview.md#end-of-week-self-check)来校准核心不变量。其余的设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载与假设。
 
-## Bonus Tasks
+## 加分任务
 
-* **O(1) Watermark.** You may implement an amortized O(1) watermark structure by using a hash map or a cyclic queue.
+* **O(1) 水位线。** 你可以用哈希表或循环队列实现一个摊还 O(1) 的水位线结构。
 
 {{#include copyright.md}}

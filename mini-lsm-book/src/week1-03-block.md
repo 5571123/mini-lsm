@@ -2,50 +2,50 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Block
+# 块（block）
 
-![Chapter Overview](./lsm-tutorial/week1-03-overview.svg)
+![本章概览](./lsm-tutorial/week1-03-overview.svg)
 
-By the end of this chapter, you will be able to:
+学完本章，你将能够：
 
-* Implement SST block encoding.
-* Implement SST block decoding and a block iterator.
-* Reason about format invariants, size accounting, lower-bound seeks, and the trust boundary of a decoder.
+* 实现 SSTable 的块编码。
+* 实现 SSTable 的块解码和块迭代器。
+* 分析格式不变量、大小计算、下界定位，以及解码器的信任边界。
 
 
-To copy the test cases into the starter code and run them:
+把测试用例复制到起始代码并运行：
 
 ```
 cargo x copy-test --week 1 --day 3
 cargo x scheck
 ```
 
-## Before You Begin
+## 开始之前
 
-The engine currently stores every key-value pair in memtables. Blocks are the first encoded representation you will design: a compact sequence of sorted entries plus an index of their starting offsets.
+引擎目前把所有键值对都存放在内存表中。块（block）是你设计的第一个编码表示：一段紧凑的有序条目序列，加上一个记录各条目起始偏移的索引。
 
-Preserve these format invariants:
+请保持这些格式不变量：
 
-1. Encoding and decoding are inverses for every valid block.
-2. Entry offsets are ordered and refer to valid positions in the data section.
-3. The footer contains exactly one offset per entry and the encoded entry count.
-4. Except when the first entry alone exceeds the target, adding an entry must not make the encoded block larger than `target_size`.
-5. Seeking positions the iterator at the first key greater than or equal to the target, or makes it invalid if no such key exists.
+1. 对每个有效的块，编码与解码互为逆操作。
+2. 条目偏移有序，并且指向数据段中的有效位置。
+3. 尾部恰好为每个条目保存一个偏移，并保存编码后的条目数。
+4. 除非第一个条目本身就超过目标大小，否则添加一个条目不得使编码后的块大于 `target_size`。
+5. 定位把迭代器放在第一个大于或等于目标键的位置；如果不存在这样的键，则使迭代器失效。
 
-> **Predict before coding:** Before looking at `BlockBuilder::add`, write a formula for the encoded size after adding one key-value pair. Include the key length, value length, entry offset, and element count. Which bytes are paid once per block, and which are paid once per entry?
+> **写代码前先预测：** 在看 `BlockBuilder::add` 之前，先写出添加一个键值对后编码大小的计算公式。公式要包含键长度、值长度、条目偏移和元素个数。哪些字节是每个块只付一次，哪些是每个条目各付一次？
 
-## Task 1: Block Builder
+## 任务 1：块构建器
 
-In the previous two chapters, you implemented the in-memory structures for an LSM storage engine. Now it is time to build the on-disk structures. Their basic unit is the block, which stores sorted key-value pairs. Blocks are often 4 KiB—the typical size of an operating-system page and an SSD page—although the ideal size depends on the storage medium. An SST consists of multiple blocks. When enough immutable memtables accumulate, the engine flushes the oldest one to an SST. In this chapter, you will implement block encoding and decoding.
+前两章你实现了 LSM 存储引擎的内存结构。现在开始构建磁盘上的结构。它的基本单位是块，块存放有序的键值对。块通常是 4 KiB——这是操作系统页和 SSD 页的典型大小——不过理想大小取决于存储介质。一个 SSTable 由多个块组成。当积累的只读内存表足够多时，引擎把最旧的一个落盘为 SSTable。本章你实现块的编码与解码。
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/block/builder.rs
 src/block.rs
 ```
 
-The block encoding format in our course is as follows:
+本课程的块编码格式如下：
 
 ```plaintext
 ----------------------------------------------------------------------------------------------------
@@ -55,7 +55,7 @@ The block encoding format in our course is as follows:
 ----------------------------------------------------------------------------------------------------
 ```
 
-Each entry is a key-value pair.
+每个条目是一个键值对。
 
 ```plaintext
 -----------------------------------------------------------------------
@@ -65,11 +65,11 @@ Each entry is a key-value pair.
 -----------------------------------------------------------------------
 ```
 
-The key and value lengths are each encoded in 2 bytes as `u16` values, so their maximum encoded length is 65,535 bytes.
+键长度和值长度各用 2 字节以 `u16` 编码，因此它们编码后的最大长度为 65,535 字节。
 
-We assume that keys are never empty, but values may be. Other parts of the system interpret an empty value as a deletion marker, or tombstone. `BlockBuilder` and `BlockIterator` simply preserve the empty value.
+我们假设键永不为空，但值可以为空。系统中的其他部分把空值解释为删除标记，即墓碑。`BlockBuilder` 和 `BlockIterator` 只是原样保留空值。
 
-At the end of each block, we store the offset of every entry followed by the total number of entries. For example, suppose the first entry starts at byte 0 and the second starts at byte 12:
+每个块的末尾存放每个条目的偏移，之后是条目总数。例如，假设第一个条目从字节 0 开始，第二个从字节 12 开始：
 
 ```
 -------------------------------
@@ -79,73 +79,73 @@ At the end of each block, we store the offset of every entry followed by the tot
 -------------------------------
 ```
 
-The block footer then has the layout shown above. Every number in the footer is stored as a `u16`.
+块尾部的布局如上图所示。尾部中的每个数字都以 `u16` 存储。
 
-The offsets turn variable-length entries into an index. Given entry number `i`, the decoder can jump to its starting byte instead of walking through every preceding key and value. That makes binary search over entry numbers possible while keeping the encoded records compact. The final count tells the decoder how many trailing `u16` values belong to this offset array and therefore where the data section ends.
+偏移把变长条目变成索引。给定条目号 `i`，解码器可以直接跳到它的起始字节，而不必走过前面每一个键和值。这样既能对条目号做二分查找，又能让编码后的记录保持紧凑。末尾的计数告诉解码器有多少个 `u16` 属于这个偏移数组，从而确定数据段在哪里结束。
 
-Each block has a size limit, `target_size`, which corresponds to `block_size` in the provided code. Unless the first key-value pair alone exceeds this limit, ensure that the encoded block is no larger than `target_size`.
+每个块有大小上限 `target_size`，对应代码中的 `block_size`。除非第一个键值对本身就超过这个上限，否则请确保编码后的块不大于 `target_size`。
 
-When `BlockBuilder::build` is called, it produces the raw data section and the unencoded entry offsets, which are stored in a `Block`. Keeping raw key-value data contiguous and storing offsets separately avoids unnecessary allocations and decoding work. Copy the raw block data into the `data` vector and decode one entry offset every 2 bytes, rather than materializing all entries as a structure such as `Vec<(Vec<u8>, Vec<u8>)>`. This compact layout is efficient.
+调用 `BlockBuilder::build` 时，它产生原始数据段和未编码的条目偏移，二者存放在 `Block` 中。让原始键值数据保持连续、把偏移单独存放，可以避免不必要的分配和解码工作。把原始块数据复制到 `data` 向量，并每 2 字节解码一个条目偏移，而不是把所有条目物化成 `Vec<(Vec<u8>, Vec<u8>)>` 之类的结构。这种紧凑布局是高效的。
 
-Implement `Block::encode` and `Block::decode` according to the format above.
+按上面的格式实现 `Block::encode` 和 `Block::decode`。
 
-## Task 2: Block Iterator
+## 任务 2：块迭代器
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/block/iterator.rs
 ```
 
-Now that you have an encoded block, implement `BlockIterator` so that callers can look up and scan keys within it.
+现在你已经有了编码后的块，请实现 `BlockIterator`，让调用方可以在块内查找和扫描键。
 
-Create a `BlockIterator` from an `Arc<Block>`. `create_and_seek_to_first` positions it at the first key in the block. `create_and_seek_to_key` positions it at the first key greater than or equal to the requested key. For example, suppose a block contains `1`, `3`, and `5`:
+从 `Arc<Block>` 创建 `BlockIterator`。`create_and_seek_to_first` 把它定位到块中的第一个键。`create_and_seek_to_key` 把它定位到第一个大于或等于所请求键的位置。例如，假设一个块包含 `1`、`3` 和 `5`：
 
 ```rust,no_run
 let mut iter = BlockIterator::create_and_seek_to_key(block, b"2");
 assert_eq!(iter.key(), b"3");
 ```
 
-Seeking to `2` positions the iterator at the next available key, which is `3`.
+定位到 `2` 会把迭代器放在下一个可用的键上，即 `3`。
 
-The iterator should copy the current key from the block and store it internally; this will be necessary when you add key compression. For the value, store only its start and end offsets instead of copying its bytes.
+迭代器应把当前键从块中复制出来并保存在内部；等你加入键压缩后会需要这一点。对于值，只保存它的起止偏移，不复制其字节。
 
-When `next` is called, advance the iterator by one entry. At the end of the block, set `key` to empty so that `is_valid` returns `false`; the caller can then move to another block if one is available.
+调用 `next` 时，把迭代器前进一个条目。到达块末尾时，把 `key` 设为空，使 `is_valid` 返回 `false`；这样调用方就可以转到下一个块（如果存在）。
 
-## Chapter Checkpoint
+## 本章检查点
 
-You should now be able to build a block, serialize it, decode it, iterate from its first key, and seek to any lower bound. Test keys that exist, keys between entries, and keys before and after the block's range.
+你现在应能构建一个块、序列化它、解码它、从第一个键开始迭代，并定位到任意下界。请测试存在的键、位于条目之间的键，以及位于块范围之前和之后的键。
 
-Passing the supplied tests demonstrates behavior for valid blocks. It does not prove that arbitrary bytes can be decoded safely. Identify which assumptions your decoder makes about trusted input and which checks a production decoder would need before indexing or allocating.
+通过给定的测试只能说明对有效块的行为正确，并不能证明任意字节都能被安全解码。请指出你的解码器对可信输入做了哪些假设，以及生产环境的解码器在索引或分配内存之前需要做哪些检查。
 
-## Test Your Understanding
+## 检验你的理解
 
-### Correctness and Format
+### 正确性与格式
 
-* What is the time complexity of seeking a key in the block?
-* Where does the cursor stop when you seek a non-existent key in your implementation?
-* What endianness does your implementation use for numbers written to blocks?
-* Can a block contain duplicated keys?
-* What happens if the user adds a key larger than the target block size?
+* 在块中定位一个键的时间复杂度是多少？
+* 在你的实现中，定位一个不存在的键时游标停在哪里？
+* 你的实现向块中写入数字时使用什么字节序？
+* 一个块可以包含重复的键吗？
+* 如果用户添加的键大于目标块大小，会发生什么？
 
-### Safety and Robustness
+### 安全性与健壮性
 
-* Is your implementation vulnerable to a maliciously constructed block? Could invalid input cause an out-of-bounds access or an out-of-memory condition?
-* Construct three malformed blocks: one with an impossible entry count, one with a non-monotonic or out-of-range offset, and one with a length that extends beyond the data section. Where would the current decoder fail for each input, and what validation would reject it cleanly?
+* 你的实现是否容易受到恶意构造的块的攻击？无效输入会导致越界访问或内存耗尽吗？
+* 构造三个畸形块：一个条目数不可能成立，一个偏移非单调或越界，一个长度超出数据段。对每种输入，当前解码器会在哪里失败，哪种校验可以干净地拒绝它？
 
-### Performance and Design
+### 性能与设计
 
-* `Block` is simply a vector of raw data and a vector of offsets. Could we change them to `Bytes` and `Arc<[u16]>`, then change the iterator interfaces to return `Bytes` instead of `&[u8]`? Assume that we use `Bytes::slice` to return a slice without copying. What are the advantages and disadvantages?
-* Suppose the LSM engine uses an object-storage service such as S3. How would you adapt the block format and its parameters to suit that environment?
+* `Block` 只是一个原始数据向量加一个偏移向量。能否把它们改成 `Bytes` 和 `Arc<[u16]>`，再把迭代器接口改成返回 `Bytes` 而不是 `&[u8]`？假设我们用 `Bytes::slice` 在不复制的情况下返回切片。各有什么优缺点？
+* 假设 LSM 引擎使用 S3 这类对象存储服务。你会如何调整块格式及其参数来适应这种环境？
 
-### Snack Break
+### 加餐时间
 
-* Do you love bubble tea? Why or why not?
+* 你喜欢珍珠奶茶吗？为什么喜欢或不喜欢？
 
-Use the [Week 1 end-of-week self-check](./week1-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs. You can also discuss them in the Discord community.
+用[第一周周末自检](./week1-overview.md#end-of-week-self-check)校验核心不变量。其余设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载和假设。你也可以在 Discord 社区讨论。
 
-## Bonus Tasks
+## 附加任务
 
-* **Backward Iterators.** Implement `prev` for `BlockIterator` to iterate over key-value pairs in reverse. You can also implement backward variants of the merge iterator and, in the next chapter, the SST iterator so that the storage engine can perform reverse scans.
+* **反向迭代器。** 为 `BlockIterator` 实现 `prev`，按相反顺序遍历键值对。你也可以实现归并迭代器的反向版本，并在下一章实现 SSTable 迭代器的反向版本，使存储引擎支持反向扫描。
 
 {{#include copyright.md}}

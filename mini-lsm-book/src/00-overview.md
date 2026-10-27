@@ -2,81 +2,81 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Mini-LSM Course Overview
+# Mini-LSM 课程概览
 
-## Course Structure
+## 课程结构
 
-![Course Overview](lsm-tutorial/00-full-overview.svg)
+![课程总览](lsm-tutorial/00-full-overview.svg)
 
-This course has three parts, or weeks. In the first week, you will focus on the structure and storage format of an LSM storage engine. In the second week, you will explore compaction in depth and add persistence to the storage engine. In the third week, you will implement multiversion concurrency control (MVCC).
+本课程包含三个部分，也就是三周。第一周聚焦 LSM 存储引擎的结构与存储格式。第二周深入压缩（compaction），并为存储引擎加入持久化。第三周实现多版本并发控制（MVCC）。
 
-* [The First Week: Mini-LSM](./week1-overview.md)
-* [The Second Week: Compaction and Persistence](./week2-overview.md)
-* [The Third Week: Multi-Version Concurrency Control](./week3-overview.md)
+* [第一周：Mini-LSM](./week1-overview.md)
+* [第二周：压缩与持久化](./week2-overview.md)
+* [第三周：多版本并发控制](./week3-overview.md)
 
-Follow [Environment Setup](./00-get-started.md) to prepare your development environment.
+按照 [环境配置](./00-get-started.md) 准备你的开发环境。
 
-## From Bitcask to Mini-LSM
+## 从 Bitcask 到 Mini-LSM
 
-If Bitcask is your starting point, you already know the central log-structured idea: do not overwrite an old record in place. Append a new record, let an index identify the newest value, and reclaim obsolete records later. Mini-LSM keeps that idea but changes the index and the shape of the files.
+如果 Bitcask 是你的起点，你已经熟悉核心的日志结构思路：不原地覆盖旧记录。追加一条新记录，用索引指向最新值，之后再回收过期记录。Mini-LSM 保留了这一思路，但改变了索引的形式与文件的形态。
 
-In a Bitcask-style engine, an in-memory hash index maps each key to its newest record on disk. That design is excellent for point lookups, but the hash index does not place keys in order. An ordered range scan therefore needs an additional ordered index or must examine and sort matching keys. The entire key directory must also fit in memory. See the original [Bitcask paper](https://riak.com/assets/bitcask-intro.pdf) for the design and its stated memory requirement.
+在 Bitcask 风格的引擎中，内存哈希索引把每个键映射到它在磁盘上的最新记录。这种设计对点查非常出色，但哈希索引并不按键排序。因此有序范围扫描要么需要额外的有序索引，要么必须检查并排序匹配的键。整个键目录还必须能放进内存。该设计及其对内存的要求见原始的 [Bitcask 论文](https://riak.com/assets/bitcask-intro.pdf)。
 
-Mini-LSM instead maintains **sorted** data at every stage:
+Mini-LSM 则在每个阶段都维护**有序**数据：
 
-1. A memtable is an ordered in-memory map. It absorbs small random writes without updating disk pages in place.
-2. Freezing and flushing a memtable turns one sorted memory run into an immutable sorted-string table (SST). Because the input is already sorted, the engine can write the file sequentially.
-3. Reads merge the newest memtables and SSTs into one logical sorted view. Source priority resolves several physical versions of the same key.
-4. Compaction merges sorted runs in the background. It pays sequential rewrite work to bound how many runs a read must consult and to reclaim obsolete values and tombstones.
-5. A write-ahead log protects the mutable part that has not reached an SST. The manifest separately records which immutable files form the current tree.
+1. 内存表（memtable）是一个有序的内存映射。它吸收小规模随机写，而不必原地更新磁盘页。
+2. 冻结并落盘内存表，会把一段有序的内存数据变成一个不可变的 sorted-string table（SST）。由于输入已经有序，引擎可以顺序写出文件。
+3. 读取时把最新的内存表与 SST 合并成一个逻辑上的有序视图。数据源的优先级用于解决同一个键的多个物理版本。
+4. 压缩（compaction）在后台合并有序段。它付出顺序重写的代价，以限制一次读取需要查询的段数，并回收过期值与墓碑（tombstone）。
+5. 预写日志（WAL）保护尚未进入 SST 的可变部分。清单（manifest）则单独记录哪些不可变文件构成当前的树。
 
-This is the design bargain behind the course: foreground writes become cheap appends and in-memory updates, while background compaction pays and schedules the work that an in-place index would perform on the write path. Sorted runs also make ordered scans and merge-based maintenance natural. The original [LSM-tree paper](https://www.cs.umb.edu/~poneil/lsmtree.pdf) motivates the structure as a way to maintain a disk index with lower insertion cost.
+这就是课程背后的设计取舍：前台写入变成廉价的追加与内存更新，而后台压缩承担并调度原本由原地索引在写路径上完成的工作。有序段也让范围扫描和基于合并的维护变得自然。原始的 [LSM-tree 论文](https://www.cs.umb.edu/~poneil/lsmtree.pdf)把这种结构定位为一种以更低插入代价维护磁盘索引的方式。
 
-The three weeks follow the consequences of that bargain. Week 1 establishes one correct logical view over sorted memory and disk structures. Week 2 controls the delayed maintenance work and makes both the file layout and unflushed writes recoverable. Week 3 retains several timestamped versions so concurrent readers can keep stable snapshots while writes continue.
+三周课程沿着这一取舍的后果展开。第一周在有序的内存与磁盘结构之上建立一个正确的逻辑视图。第二周控制被延迟的维护工作，并让文件布局与未落盘的写入都可恢复。第三周保留多个带时间戳的版本，使并发读者在写入持续进行时仍能持有稳定的快照。
 
-## Overview of LSM
+## LSM 概览
 
-An LSM storage engine generally has three components:
+一个 LSM 存储引擎通常包含三个组件：
 
-1. A write-ahead log that persists recent data for recovery.
-2. SSTs on disk that form the LSM-tree structure.
-3. Memtables in memory that batch small writes.
+1. 预写日志（WAL），用于持久化最近的数据以便恢复。
+2. 磁盘上的 SST，构成 LSM-tree 结构。
+3. 内存中的内存表（memtable），用于攒批小写入。
 
-The storage engine generally provides the following interfaces:
+存储引擎通常提供以下接口：
 
-* `Put(key, value)`: Stores a key-value pair in the LSM tree.
-* `Delete(key)`: Removes a key and its corresponding value.
-* `Get(key)`: Retrieves the value associated with a key.
-* `Scan(range)`: Retrieves a range of key-value pairs.
+* `Put(key, value)`：在 LSM 树中存储一个键值对。
+* `Delete(key)`：删除一个键及其对应的值。
+* `Get(key)`：取出某个键关联的值。
+* `Scan(range)`：取出某个范围内的键值对。
 
-It may also provide an operation that establishes a persistence boundary:
+它还可能提供一个建立持久化边界的操作：
 
-* `Sync()`: Ensures that all preceding operations have been persisted to disk.
+* `Sync()`：确保此前所有操作都已持久化到磁盘。
 
-Some engines combine `Put` and `Delete` into a single operation called `WriteBatch`, which accepts a batch of updates.
+有些引擎把 `Put` 和 `Delete` 合并为单个操作 `WriteBatch`，它接受一批更新。
 
-The overview diagrams assume a leveled compaction layout, which is common in production systems. In Week 2, you will implement and compare several compaction strategies.
+这些概览图假设采用 leveled 压缩布局，这在生产系统中很常见。在第二周，你会实现并比较多种压缩策略。
 
-### Write Path
+### 写路径
 
-![Write Path](lsm-tutorial/00-lsm-write-flow.svg)
+![写路径](lsm-tutorial/00-lsm-write-flow.svg)
 
-The LSM write path has four steps:
+LSM 的写路径分为四步：
 
-1. Write the key-value pair to the write-ahead log so that it can be recovered after a crash.
-2. Write the key-value pair to the mutable memtable. After steps 1 and 2 are complete, the engine can report that the write has completed.
-3. In the background, freeze a full mutable memtable, making it immutable, and flush it to disk as an SST file.
-4. Also in the background, compact files from one or more levels into lower levels. This maintains the shape of the LSM tree and limits read amplification.
+1. 把键值对写入预写日志（WAL），以便崩溃后可以恢复。
+2. 把键值对写入可写内存表（mutable memtable）。第 1、2 步完成后，引擎即可报告写入已完成。
+3. 在后台冻结一个已写满的可写内存表，使其成为只读内存表（immutable memtable），并把它作为 SST 文件落盘。
+4. 同样在后台，把一个或多个层（level）中的文件压缩到更低的层。这维持 LSM 树的形态，并限制读放大。
 
-### Read Path
+### 读路径
 
-![Read Path](lsm-tutorial/00-lsm-read-flow.svg)
+![读路径](lsm-tutorial/00-lsm-read-flow.svg)
 
-To read a key, the engine:
+读取一个键时，引擎会：
 
-1. Probes the memtables from newest to oldest.
-2. If the memtables do not determine the result, searches the SSTs in the LSM tree.
+1. 从新到旧依次探测各个内存表。
+2. 如果内存表无法确定结果，就在 LSM 树的 SST 中查找。
 
-There are two types of reads: lookups and scans. A lookup finds one key in the LSM tree, whereas a scan iterates over all keys within a range. The course covers both.
+读有两类：点查（lookup）与扫描（scan）。点查在 LSM 树中查找一个键，扫描则遍历某个范围内的所有键。课程会覆盖这两类读。
 
 {{#include copyright.md}}

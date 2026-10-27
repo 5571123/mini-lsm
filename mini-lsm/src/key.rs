@@ -47,22 +47,22 @@ impl Key<Vec<u8>> {
         Self(Vec::new())
     }
 
-    /// Create a `KeyVec` from a `Vec<u8>`. Will be removed in week 3.
+    /// 从 `Vec<u8>` 创建一个 `KeyVec`。将在第 3 周移除。
     pub fn from_vec(key: Vec<u8>) -> Self {
         Self(key)
     }
 
-    /// Clears the key and set ts to 0.
+    /// 清空键，并把 ts 置为 0。
     pub fn clear(&mut self) {
         self.0.clear()
     }
 
-    /// Append a slice to the end of the key
+    /// 在键的末尾追加一段切片
     pub fn append(&mut self, data: &[u8]) {
         self.0.extend(data)
     }
 
-    /// Set the key from a slice without re-allocating. The signature will change in week 3.
+    /// 用切片设置键，不重新分配内存。函数签名会在第 3 周变化。
     pub fn set_from_slice(&mut self, key_slice: KeySlice) {
         self.0.clear();
         self.0.extend(key_slice.0);
@@ -76,7 +76,7 @@ impl Key<Vec<u8>> {
         Key(self.0.into())
     }
 
-    /// Always use `raw_ref` to access the key in week 1 + 2. This function will be removed in week 3.
+    /// 在第 1 周和第 2 周，始终用 `raw_ref` 访问键。该函数将在第 3 周移除。
     pub fn raw_ref(&self) -> &[u8] {
         self.0.as_ref()
     }
@@ -95,12 +95,12 @@ impl Key<Bytes> {
         Key(&self.0)
     }
 
-    /// Create a `KeyBytes` from a `Bytes`. Will be removed in week 3.
+    /// 从 `Bytes` 创建一个 `KeyBytes`。将在第 3 周移除。
     pub fn from_bytes(bytes: Bytes) -> KeyBytes {
         Key(bytes)
     }
 
-    /// Always use `raw_ref` to access the key in week 1 + 2. This function will be removed in week 3.
+    /// 在第 1 周和第 2 周，始终用 `raw_ref` 访问键。该函数将在第 3 周移除。
     pub fn raw_ref(&self) -> &[u8] {
         self.0.as_ref()
     }
@@ -119,12 +119,12 @@ impl<'a> Key<&'a [u8]> {
         Key(self.0.to_vec())
     }
 
-    /// Create a key slice from a slice. Will be removed in week 3.
+    /// 从切片创建一个键切片。将在第 3 周移除。
     pub fn from_slice(slice: &'a [u8]) -> Self {
         Self(slice)
     }
 
-    /// Always use `raw_ref` to access the key in week 1 + 2. This function will be removed in week 3.
+    /// 在第 1 周和第 2 周，始终用 `raw_ref` 访问键。该函数将在第 3 周移除。
     pub fn raw_ref(self) -> &'a [u8] {
         self.0
     }

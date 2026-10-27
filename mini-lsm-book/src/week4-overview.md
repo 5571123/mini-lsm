@@ -2,56 +2,56 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# The Rest of Your Life
+# 你的余生
 
-Congratulations! You have built a storage engine from the ground up.
+恭喜！你已经从零构建了一个存储引擎。
 
-Mini-LSM began with an ordered in-memory map. It now has its own on-disk formats, a unified read path, background compaction, crash recovery, multi-version concurrency control, and transactions. More importantly, you have practiced the kind of reasoning that makes storage systems trustworthy: defining an invariant, finding the event that could violate it, and designing evidence that would expose the mistake.
+Mini-LSM 起初只是一个有序的内存映射。现在它有了自己的磁盘格式、统一的读路径、后台压缩、崩溃恢复、多版本并发控制和事务。更重要的是，你练习了让存储系统值得信赖的那类推理：定义一个不变量，找出可能违反它的事件，并设计能暴露这个错误的证据。
 
-## Look Back at What You Built
+## 回顾你构建的东西
 
-In [Week 1](./week1-overview.md), you assembled the basic data path. Writes entered a memtable, frozen memtables became SSTs, and reads merged several physical sources into one logical view. Blocks, iterators, Bloom filters, prefix encoding, and the block cache were not isolated exercises: together they determined how bytes moved from an API call to memory and disk, and back again.
+在[第一周](./week1-overview.md)，你搭建了基本的数据通路。写入进入内存表，冻结的内存表变成 SST，读操作把多个物理来源合并成一个逻辑视图。块、迭代器、布隆过滤器、前缀编码和块缓存并不是彼此孤立的练习：它们共同决定了字节如何从一次 API 调用流向内存和磁盘，再流回来。
 
-In [Week 2](./week2-overview.md), you turned that working engine into a persistent one. You compared leveled and tiered compaction, balanced read, write, and space amplification, and preserved newer data while background work reorganized files. The manifest and write-ahead log made recovery possible, while checksums and careful write ordering forced you to ask exactly what survives each crash point.
+在[第二周](./week2-overview.md)，你把这个能工作的引擎变成了持久化的引擎。你比较了分层（leveled）与分层（tiered）压缩，权衡了读放大、写放大和空间放大，并在后台工作重组文件时保留较新的数据。清单（manifest）和预写日志（WAL）让恢复成为可能，而校验和与谨慎的写入顺序迫使你追问：在每个崩溃点之后究竟还有什么能存活。
 
-In [Week 3](./week3-overview.md), one value per key became a history of timestamped versions. You added stable snapshots, watermarks, atomic write batches, transaction-local writes, and commit-time validation. You also learned to state the boundary of a design honestly: Mini-LSM protects tracked point-key dependencies, but it does not track range gaps and therefore does not provide full serializability for scan-heavy workloads.
+在[第三周](./week3-overview.md)，每个键一个值变成了带时间戳的版本历史。你加入了稳定的快照、水位线、原子写批次、事务本地写入和提交时校验。你还学会了诚实地说明一个设计的边界：Mini-LSM 保护被跟踪的点键依赖，但它不跟踪范围空隙，因此不为扫描密集的工作负载提供完整的可串行化。
 
-Across all three weeks, the recurring lesson is that a storage engine is a collection of agreements between layers. An ordering rule in the key type constrains blocks, SSTs, iterators, compaction, and recovery. A durability claim depends on both an encoded record and the order of filesystem operations. A transaction guarantee depends on when state becomes visible, not only on which lock is present. When you can trace those agreements end to end, you are doing systems engineering rather than merely completing functions.
+贯穿这三周，反复出现的结论是：存储引擎是各层之间的一组约定。键类型中的一条排序规则约束着块、SST、迭代器、压缩和恢复。一项持久性主张同时取决于一条编码后的记录和文件系统操作的顺序。一项事务保证取决于状态何时变得可见，而不只取决于存在哪把锁。当你能端到端地追踪这些约定时，你做的就是系统工程师的工作，而不只是完成几个函数。
 
-## Choose Your Next Experiment
+## 选择你的下一个实验
 
-There is no single correct Week 4. Start with a workload or guarantee you care about, measure the current engine, and make one change whose effect you can explain.
+第四周没有唯一正确的答案。从一个你在意的工作负载或保证出发，度量当前的引擎，然后做一处你能解释其影响的改动。
 
-### Measure and tune the engine
+### 度量并调优引擎
 
-Build a benchmark harness for point reads, range scans, writes, and mixed workloads. Record latency distributions as well as throughput, then attribute time and bytes to memtables, cache lookups, table reads, compaction, and synchronization. Use those measurements to tune level sizes, compaction triggers, Bloom-filter parameters, and cache capacity. A good first project is to explain one performance result that initially surprised you.
+为点查、范围扫描、写入和混合工作负载构建一套基准测试框架。既记录延迟分布，也记录吞吐量，然后把时间和字节归因到内存表、缓存查找、表读取、压缩和同步上。用这些度量来调整层大小、压缩触发条件、布隆过滤器参数和缓存容量。一个好的首个项目是解释一个最初让你意外的性能结果。
 
-### Explore new physical formats
+### 探索新的物理格式
 
-Add block compression, compare alternative block encodings, or implement the skip list and block cache yourself. Each change should preserve compatibility and corruption handling, so version the format and test truncated, malformed, and mixed-version files. Key-value separation is a larger experiment: move large values into a value log and study how garbage collection changes write and space amplification.
+加入块压缩，比较不同的块编码，或者自己实现跳表和块缓存。每项改动都应当保持兼容性和损坏处理，因此要为格式做版本管理，并测试被截断、格式错误和混合版本的文件。键值分离是一个更大的实验：把大值移入值日志，研究垃圾回收如何改变写放大和空间放大。
 
-### Make compaction and I/O more capable
+### 让压缩和 I/O 更有能力
 
-Implement trivial moves, parallel subcompactions, rate limiting, prefetching, or a more workload-aware compaction picker. Then try an asynchronous storage path or an `io_uring`-based backend. These projects are most useful when you can show which stalls or amplification costs they reduce—and which new scheduling, cancellation, and recovery states they introduce.
+实现 trivial move、并行子压缩、限速、预取，或一个更感知工作负载的压缩选择器。然后尝试异步存储路径或基于 `io_uring` 的后端。当你能说明这些项目减少了哪些停顿或放大开销，以及它们引入了哪些新的调度、取消和恢复状态时，它们才最有用。
 
-### Expand the data model
+### 扩展数据模型
 
-Column families let several logical key spaces share one engine while keeping separate options and lifecycles. Sharding asks a different set of questions: how are ranges assigned, moved, and recovered, and what happens to a transaction that crosses a boundary? Managed timestamps and stronger range-conflict tracking can extend the transaction model toward workloads that Mini-LSM's current point-key validation does not cover.
+列族让多个逻辑键空间共享一个引擎，同时保持各自的选项和生命周期。分片则提出另一组问题：范围如何分配、移动和恢复，一个跨越边界的事务会发生什么？托管时间戳和更强的范围冲突跟踪可以把事务模型扩展到 Mini-LSM 当前点键校验未覆盖的工作负载。
 
-### Build a database on top
+### 在其上构建一个数据库
 
-Add a SQL layer, indexes, or a small application that needs ordered scans and transactions. This exposes the storage engine to real access patterns and makes abstract tradeoffs concrete. You will quickly discover which APIs are awkward, which metrics are missing, and which guarantees the layer above actually relies on.
+加入 SQL 层、索引，或一个需要有序扫描和事务的小应用。这会把存储引擎暴露给真实的访问模式，并让抽象的取舍变得具体。你很快会发现哪些 API 用起来别扭，哪些指标缺失，以及上层的软件究竟依赖哪些保证。
 
-## Keep the Habit
+## 保持这个习惯
 
-Whatever you build next, keep the workflow that carried you through Mini-LSM:
+无论你接下来构建什么，保持这套带你走完 Mini-LSM 的流程：
 
-1. State the guarantee in observable terms.
-2. Draw the smallest state, crash point, or interleaving that could break it.
-3. Measure or test that case before optimizing the implementation.
-4. Change one layer at a time, then recheck every layer that shares its invariant.
-5. Document both what the system guarantees and what it deliberately does not.
+1. 用可观察的表述说明保证。
+2. 画出能破坏它的最小状态、崩溃点或交替执行。
+3. 在优化实现之前，先度量或测试那个用例。
+4. 一次改动一层，然后复查每一个共享该不变量的层。
+5. 同时记录系统保证什么，以及它有意不保证什么。
 
-You now have more than a toy key-value store. You have a compact laboratory for storage formats, concurrency, recovery, and performance—and the foundation to read a production engine with much sharper questions. Keep experimenting, keep measuring, and congratulations again on finishing Mini-LSM.
+你现在拥有的已经不只是一个玩具键值存储。你拥有一个用于研究存储格式、并发、恢复和性能的小型实验室，以及用更锐利的问题去阅读生产级引擎的基础。继续实验，继续度量，再次恭喜你完成 Mini-LSM。
 
 {{#include copyright.md}}

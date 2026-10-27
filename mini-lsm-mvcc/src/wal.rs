@@ -14,7 +14,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::hash::Hasher;
-use std::io::{BufWriter, Read, Write};
+use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -45,11 +45,16 @@ impl Wal {
 
     pub fn recover(path: impl AsRef<Path>, skiplist: &SkipMap<KeyBytes, Bytes>) -> Result<Self> {
         let path = path.as_ref();
-        let mut file = OpenOptions::new()
-            .read(true)
-            .append(true)
-            .open(path)
-            .context("failed to recover from WAL")?;
+        let mut options = OpenOptions::new();
+        options.read(true);
+        // Unix 用 O_APPEND 保证追加写的原子性。Windows 下 O_APPEND 会去掉 FILE_WRITE_DATA 权限，
+        // 导致下面截断损坏尾部时 `set_len` 报「拒绝访问」，因此改用读写方式打开，
+        // 读完后再把游标移到文件末尾，让后续写入仍然表现为追加。
+        #[cfg(unix)]
+        options.append(true);
+        #[cfg(not(unix))]
+        options.write(true);
+        let mut file = options.open(path).context("failed to recover from WAL")?;
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)?;
         let mut rbuf: &[u8] = buf.as_slice();
@@ -68,8 +73,8 @@ impl Wal {
             let mut batch_buf = &rbuf[..batch_size];
             let mut kv_pairs = Vec::new();
             let mut hasher = crc32fast::Hasher::new();
-            // The checksum computed from the individual components should be the same as a direct checksum on the buffer.
-            // Students' implementation only needs to do a single checksum on the buffer. We compute both for verification purpose.
+            // 由各个字段分别计算出的校验和应与直接对缓冲区计算的校验和相同。
+            // 学生的实现只需要对缓冲区做一次校验和计算。这里两种都算，用于互相验证。
             let single_checksum = crc32fast::hash(batch_buf);
             while batch_buf.has_remaining() {
                 ensure!(
@@ -118,12 +123,14 @@ impl Wal {
             file.sync_all()
                 .context("failed to sync truncated WAL tail")?;
         }
+        // 把游标放回文件末尾：Unix 下 O_APPEND 会忽略游标，Windows 下则靠它实现追加写。
+        file.seek(SeekFrom::End(0))?;
         Ok(Self {
             file: Arc::new(Mutex::new(BufWriter::new(file))),
         })
     }
 
-    /// Implement this in week 3, day 5.
+    /// 在 Week 3 Day 5 中实现。
     pub fn put_batch(&self, data: &[(KeySlice, &[u8])]) -> Result<()> {
         let mut file = self.file.lock();
         let mut buf = Vec::<u8>::new();

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
+#![allow(unused_variables)] // TODO(you): 实现该模块后删除此 lint
+#![allow(dead_code)] // TODO(you): 实现该模块后删除此 lint
 
 use std::path::Path;
 use std::sync::Arc;
@@ -23,7 +23,7 @@ use anyhow::Result;
 use super::{BlockMeta, SsTable};
 use crate::{block::BlockBuilder, key::KeySlice, lsm_storage::BlockCache};
 
-/// Builds an SSTable from key-value pairs.
+/// 用键值对构建一个 SSTable。
 pub struct SsTableBuilder {
     builder: BlockBuilder,
     first_key: Vec<u8>,
@@ -34,28 +34,26 @@ pub struct SsTableBuilder {
 }
 
 impl SsTableBuilder {
-    /// Create a builder based on target block size.
+    /// 按目标块大小创建一个构建器。
     pub fn new(block_size: usize) -> Self {
         unimplemented!()
     }
 
-    /// Adds a key-value pair to SSTable.
+    /// 向 SSTable 追加一个键值对。
     ///
-    /// Note: You should split a new block when the current block is full.(`std::mem::replace` may
-    /// be helpful here)
+    /// 注意：当前块写满时，你应切出一个新块。（`std::mem::replace` 在这里会很有用）
     pub fn add(&mut self, key: KeySlice, value: &[u8]) {
         unimplemented!()
     }
 
-    /// Get the estimated size of the SSTable.
+    /// 获取 SSTable 的预估大小。
     ///
-    /// Since the data blocks contain much more data than meta blocks, just return the size of data
-    /// blocks here.
+    /// 由于数据块的数据量远多于元数据块，这里直接返回数据块的大小。
     pub fn estimated_size(&self) -> usize {
         unimplemented!()
     }
 
-    /// Builds the SSTable and writes it to the given path. Use the `FileObject` structure to manipulate the disk objects.
+    /// 构建 SSTable 并写入指定路径。用 `FileObject` 结构操作磁盘对象。
     pub fn build(
         #[allow(unused_mut)] mut self,
         id: usize,

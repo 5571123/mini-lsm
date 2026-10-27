@@ -18,7 +18,7 @@ use crate::lsm_storage::LsmStorageState;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LeveledCompactionTask {
-    // if upper_level is `None`, then it is L0 compaction
+    // 如果 upper_level 为 `None`，说明这是 L0 压缩
     pub upper_level: Option<usize>,
     pub upper_level_sst_ids: Vec<usize>,
     pub lower_level: usize,

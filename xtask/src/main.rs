@@ -23,32 +23,32 @@ use duct::cmd;
 struct CopyTestAction {
     #[arg(long)]
     week: usize,
-    /// Copy one day; omit to copy all available days.
+    /// 只复制某一天；省略则复制所有可用天数。
     #[arg(long)]
     day: Option<usize>,
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum Action {
-    /// Check.
+    /// 检查。
     Check,
-    /// Build and serve book.
+    /// 构建 book 并启动本地服务。
     Book,
-    /// Install necessary tools for development.
+    /// 安装开发所需的工具。
     InstallTools,
-    /// Show environment variables.
+    /// 显示环境变量。
     Show,
-    /// Run CI jobs
+    /// 运行 CI 任务
     Ci,
-    /// Sync starter repo and reference solution.
+    /// 同步 starter 仓库与参考实现。
     Sync,
-    /// Check starter code
+    /// 检查 starter 代码
     Scheck,
-    /// Copy test cases
+    /// 复制测试用例
     CopyTest(CopyTestAction),
 }
 
-/// Simple program to greet a person
+/// 一个简单的问候程序
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -177,12 +177,14 @@ fn copy_test_case(test: CopyTestAction) -> Result<()> {
             }
             continue;
         }
-        cmd!("cp", src, target).run()?;
+        // 用 `std::fs::copy` 而不是外部 `cp`：Windows 的默认 PATH 里没有 cp，
+        // 学生只是想把测试用例拷进来也会失败。
+        std::fs::copy(&src, &target)?;
     }
     let test_filename = "harness.rs";
     let src = format!("{}/{}", src_dir, test_filename);
     let target = format!("{}/{}", target_dir, test_filename);
-    cmd!("cp", src, target).run()?;
+    std::fs::copy(&src, &target)?;
     let mut test_file = Vec::new();
     for file in Path::new(&target_dir).read_dir()? {
         let file = file?;
@@ -196,11 +198,8 @@ fn copy_test_case(test: CopyTestAction) -> Result<()> {
         }
     }
     let mut tests_mod = String::new();
-    writeln!(tests_mod, "//! DO NOT MODIFY -- Mini-LSM tests modules")?;
-    writeln!(
-        tests_mod,
-        "//! This file will be automatically rewritten by the copy-test command."
-    )?;
+    writeln!(tests_mod, "//! 不要修改 —— Mini-LSM 测试模块")?;
+    writeln!(tests_mod, "//! 该文件会被 copy-test 命令自动重写。")?;
     writeln!(tests_mod)?;
     for tf in test_file {
         writeln!(tests_mod, "mod {};", tf)?;

@@ -115,14 +115,14 @@ impl CompactionController {
 
 #[derive(Debug, Clone)]
 pub enum CompactionOptions {
-    /// Leveled compaction with partial compaction + dynamic level support (= RocksDB's Leveled
-    /// Compaction)
+    /// 分层压缩（leveled），支持部分压缩与动态层数（即 RocksDB 的 Leveled
+    /// Compaction）
     Leveled(LeveledCompactionOptions),
-    /// Tiered compaction (= RocksDB's universal compaction)
+    /// 分级压缩（tiered），即 RocksDB 的 universal compaction
     Tiered(TieredCompactionOptions),
-    /// Simple leveled compaction
+    /// 简单分层压缩
     Simple(SimpleLeveledCompactionOptions),
-    /// In no compaction mode (week 1), always flush to L0
+    /// 无压缩模式（week 1），总是落盘到 L0
     NoCompaction,
 }
 
@@ -169,7 +169,7 @@ impl LsmStorageInner {
         if let Some(builder) = builder
             && entries_in_builder > 0
         {
-            let sst_id = self.next_sst_id(); // lock dropped here
+            let sst_id = self.next_sst_id(); // 锁在这里释放
             let sst = Arc::new(builder.build(
                 sst_id,
                 Some(self.block_cache.clone()),

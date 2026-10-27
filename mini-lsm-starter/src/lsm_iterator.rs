@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
+#![allow(unused_variables)] // TODO(you): 实现该模块后删除此 lint
+#![allow(dead_code)] // TODO(you): 实现该模块后删除此 lint
 
 use anyhow::Result;
 
@@ -22,7 +22,7 @@ use crate::{
     mem_table::MemTableIterator,
 };
 
-/// Represents the internal type for an LSM iterator. This type will be changed across the course for multiple times.
+/// 表示 LSM 迭代器的内部类型。该类型会在课程中多次变化。
 type LsmIteratorInner = MergeIterator<MemTableIterator>;
 
 pub struct LsmIterator {
@@ -55,9 +55,9 @@ impl StorageIterator for LsmIterator {
     }
 }
 
-/// A wrapper around existing iterator, will prevent users from calling `next` when the iterator is
-/// invalid. If an iterator is already invalid, `next` does not do anything. If `next` returns an error,
-/// `is_valid` should return false, and `next` should always return an error.
+/// 现有迭代器的包装器，阻止用户在迭代器无效时调用 `next`。如果迭代器已经无效，
+/// `next` 什么也不做。如果 `next` 返回错误，`is_valid` 应返回 false，
+/// 且 `next` 应始终返回错误。
 pub struct FusedIterator<I: StorageIterator> {
     iter: I,
     has_errored: bool,

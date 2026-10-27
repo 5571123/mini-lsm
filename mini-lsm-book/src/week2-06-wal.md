@@ -2,61 +2,61 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Write-Ahead Log (WAL)
+# 预写日志（WAL）
 
-![Chapter Overview](./lsm-tutorial/week2-06-overview.svg)
+![本章概览](./lsm-tutorial/week2-06-overview.svg)
 
-By the end of this chapter, you will be able to:
+学完本章，你将能够：
 
-* Encode memtable updates in a write-ahead log and synchronize its buffered data.
-* Record memtable lifetimes in the manifest and recover them from WALs after a restart.
-* Restore newest-to-oldest memtable order and a collision-free next SST ID.
-* Explain the exact durability guarantee provided by `sync` and `close`.
+* 把内存表的更新编码进预写日志（WAL），并同步它的缓冲数据。
+* 在清单（manifest）中记录内存表的生命周期，并在重启后从 WAL 恢复它们。
+* 恢复从新到旧的内存表顺序，以及一个不冲突的下一个 SST ID。
+* 解释 `sync` 和 `close` 提供的确切持久化保证。
 
-To copy the test cases into the starter code and run them:
+把测试用例复制到起始代码并运行：
 
 ```
 cargo x copy-test --week 2 --day 6
 cargo x scheck
 ```
 
-## Before You Begin
+## 开始之前
 
-The manifest makes the SST layout recoverable, but it cannot restore writes that were still in memory when the process crashed. A WAL persists the contents of each memtable until that memtable is safely represented by an SST.
+清单（manifest）让 SST 布局可以恢复，但它无法恢复进程崩溃时仍在内存中的写入。预写日志（WAL）会把每个内存表的内容持久化，直到该内存表被 SST 安全地表示出来。
 
-Keep these invariants in mind:
+请记住这些不变量：
 
-1. Every WAL record belongs to exactly one memtable, and the WAL ID becomes the SST ID if that memtable is flushed.
-2. The manifest records each new memtable so recovery knows which WAL files are live. A flush record retires the corresponding WAL logically before the file is removed physically.
-3. Writes may remain in `BufWriter` and the operating-system page cache. They become durable only after `flush()` followed by `sync_all()`.
-4. Recovered immutable memtables are ordered newest to oldest, just like memtables created during normal execution.
-5. `next_sst_id` is one greater than the maximum ID observed in either SST state or live WAL state.
+1. 每条 WAL 记录恰好属于一个内存表；如果该内存表被落盘，它的 WAL ID 就成为 SST ID。
+2. 清单（manifest）记录每个新的内存表，使恢复过程知道哪些 WAL 文件是有效的。落盘记录在文件被物理删除之前，先在逻辑上让对应的 WAL 退役。
+3. 写入可能仍留在 `BufWriter` 和操作系统页缓存中。只有在 `flush()` 之后再调用 `sync_all()`，它们才变得持久。
+4. 恢复出的只读内存表从新到旧排列，与正常执行期间创建的内存表一样。
+5. `next_sst_id` 等于在 SST 状态或有效 WAL 状态中观察到的最大 ID 加一。
 
-> **Predict before coding:** The manifest contains `NewMemtable(7)` but no `Flush(7)`, and `00007.wal` contains `k -> v`. What should recovery construct? If `Flush(7)` is durable but the old WAL file was not deleted before the crash, should recovery replay it?
+> **写代码前先预测：** 清单（manifest）中包含 `NewMemtable(7)` 但没有 `Flush(7)`，而 `00007.wal` 包含 `k -> v`。恢复应构建什么？如果 `Flush(7)` 已持久化，但旧的 WAL 文件在崩溃前没有被删除，恢复是否应重放它？
 
-## Task 1: WAL Encoding
+## 任务 1：WAL 编码
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/wal.rs
 ```
 
-The previous chapter persisted the LSM structure and flushed every memtable during a clean close. A crash can bypass that close path. To recover unflushed data, log each memtable update to a write-ahead log. WALs are enabled only when `self.options.enable_wal` is true.
+上一章持久化了 LSM 结构，并在正常关闭时落盘每个内存表。崩溃可能绕过这条关闭路径。为了恢复未落盘的数据，把每次内存表更新记录到预写日志（WAL）中。只有当 `self.options.enable_wal` 为 true 时才启用 WAL。
 
-The WAL encoding is a list of key-value pairs.
+WAL 的编码是一串键值对。
 
 ```
 | key_len | key | value_len | value |
 ```
 
-Implement `recover` to replay the WAL into a memtable and reopen the file for appending.
+实现 `recover`，把 WAL 重放进一个内存表，并重新以追加方式打开该文件。
 
-The WAL uses a `BufWriter` to reduce the number of system calls on the write path. Updating a key does not by itself guarantee that the record has reached durable storage. The engine makes that guarantee when `sync` succeeds. Implement `sync` by first calling `flush()` to move bytes from `BufWriter` to the file and then calling `get_mut().sync_all()` to synchronize the file. You do not need to call `sync_all()` for every individual write.
+WAL 使用 `BufWriter` 来减少写路径上的系统调用次数。更新一个键本身并不保证该记录已到达持久存储。引擎在 `sync` 成功时给出这个保证。实现 `sync` 时，先调用 `flush()` 把字节从 `BufWriter` 移到文件中，再调用 `get_mut().sync_all()` 同步该文件。你不需要为每一次单独的写入调用 `sync_all()`。
 
-## Task 2: Integrate WALs
+## 任务 2：集成 WAL
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/mem_table.rs
@@ -64,48 +64,48 @@ src/wal.rs
 src/lsm_storage.rs
 ```
 
-`MemTable` has an optional WAL. When it is present, append every update to that WAL. If `enable_wal` is true, create each memtable with `create_with_wal` and append `ManifestRecord::NewMemtable` before making the new WAL-backed memtable available for writes.
+`MemTable` 有一个可选的 WAL。存在 WAL 时，把每次更新追加到该 WAL。如果 `enable_wal` 为 true，用 `create_with_wal` 创建每个内存表，并在让新的带 WAL 内存表可用于写入之前追加 `ManifestRecord::NewMemtable`。
 
-Store each WAL as `<memtable_id>.wal` in the database directory. If the memtable is later flushed, reuse that ID for its SST.
+把每个 WAL 存为数据库目录下的 `<memtable_id>.wal`。如果该内存表之后被落盘，就为它的 SST 复用这个 ID。
 
-## Task 3: Recover from the WALs
+## 任务 3：从 WAL 恢复
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/lsm_storage.rs
 ```
 
-If WAL is enabled, recover live memtables from their WALs when opening the database. Also implement the database's `sync` method. After `sync` returns successfully, writes completed before that synchronization point must be recoverable after restart. In this design, synchronizing the current memtable's WAL provides that guarantee because frozen memtables are synchronized when they are replaced.
+如果启用了 WAL，在打开数据库时从各自的 WAL 恢复有效内存表。同时实现数据库的 `sync` 方法。`sync` 成功返回之后，在该同步点之前完成的写入必须在重启后可恢复。在这个设计中，同步当前内存表的 WAL 就提供了这个保证，因为只读内存表在被替换时已经同步过。
 
 ```
 cargo run --bin mini-lsm-cli -- --enable-wal
 ```
 
-Restore `next_sst_id` as `max{memtable ID, SST ID} + 1`. When WALs are enabled, `close` synchronizes them instead of flushing every memtable to an SST. Stop and join the compaction and flush threads before returning.
+把 `next_sst_id` 恢复为 `max{memtable ID, SST ID} + 1`。启用 WAL 时，`close` 改为同步它们，而不是把每个内存表落盘为 SST。返回之前，停止并 join 压缩线程和落盘线程。
 
-## Chapter Checkpoint
+## 本章检查点
 
-With WALs enabled, synchronized writes should survive a restart even when their memtables were never flushed. Recovery should ignore stale WAL files retired by manifest flush records, rebuild live immutable memtables in newest-to-oldest order, create a fresh mutable memtable with a new WAL, and choose an unused ID.
+启用 WAL 时，已同步的写入即使所在的内存表从未落盘，也应在重启后存活。恢复过程应忽略被清单（manifest）落盘记录标记退役的过期 WAL 文件，按从新到旧的顺序重建有效的只读内存表，用新的 WAL 创建一个全新的可写内存表，并选择一个未使用的 ID。
 
-Test more than a clean close: create several memtables, synchronize, reopen, and trace the manifest records that identify each live WAL. Explain which writes are guaranteed to survive if the process stops before `sync`, after `sync`, and after a flush record becomes durable but before its WAL file is removed.
+测试不能只覆盖正常关闭：创建多个内存表、同步、重新打开，并跟踪标识每个有效 WAL 的清单（manifest）记录。解释如果进程在 `sync` 之前停止、在 `sync` 之后停止，以及在落盘记录持久化之后但它的 WAL 文件被删除之前停止，哪些写入保证能存活。
 
-## Test Your Understanding
+## 检验你的理解
 
-### Recovery and Durability
+### 恢复与持久性
 
-* When should you call `fsync` in your engine? What happens if you call `fsync` too often (i.e., on every put key request)?
-* **Experiment:** Measure batched `fsync` latency and throughput on your own storage device. Record the operating system, filesystem, device, queue depth, and batch size; why is there no single hardware-independent answer?
-* When can you tell the user that their modifications (put/delete) have been persisted?
-* Why must a new memtable be recorded in the manifest before a synchronized write to its WAL can be considered recoverable?
-* Why should a flushed memtable's WAL be deleted only after the manifest's flush record is durable?
-* Given WAL IDs 4 and 9 plus live SST IDs 3, 7, and 12, what ID should the next memtable use?
-* How can you handle corrupted data in WAL?
+* 你的引擎中应在何时调用 `fsync`？如果调用得太频繁（例如每次 put 键请求都调用）会怎样？
+* **实验：** 在你自己的存储设备上测量批量 `fsync` 的延迟和吞吐。记录操作系统、文件系统、设备、队列深度和批大小；为什么不存在一个与硬件无关的统一答案？
+* 你何时可以告诉用户他们的修改（put/delete）已经持久化？
+* 为什么新的内存表必须在对其 WAL 的已同步写入被认为可恢复之前记录到清单（manifest）中？
+* 为什么已落盘内存表的 WAL 只能在清单（manifest）的落盘记录持久化之后才删除？
+* 给定 WAL ID 4 和 9，以及有效 SST ID 3、7 和 12，下一个内存表应使用哪个 ID？
+* 你如何处理 WAL 中的损坏数据？
 
-### Performance and Design
+### 性能与设计
 
-* Is it possible to design an LSM engine without WAL (i.e., use L0 as WAL)? What will be the implications of this design?
+* 是否可能设计一个不带 WAL 的 LSM 引擎（也就是把 L0 当作 WAL）？这种设计会带来什么影响？
 
-Use the [Week 2 end-of-week self-check](./week2-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs. You can also discuss them in the Discord community.
+用[第二周周末自检](./week2-overview.md#end-of-week-self-check)校验核心不变量。其余设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载和假设。你也可以在 Discord 社区讨论。
 
 {{#include copyright.md}}

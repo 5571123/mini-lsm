@@ -2,45 +2,45 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Snapshot Read - Memtables and Timestamps
+# 快照读：内存表与时间戳
 
-By the end of this chapter, you will be able to:
+本章结束时，你将能够：
 
-* Refactor your memtable/WAL to store multiple versions of a key.
-* Assign one unique commit timestamp to every write batch.
-* Preserve every version through compaction while keeping all versions of one user key in one SST.
-* Return the newest committed version of each user key from the latest snapshot.
+* 重构内存表/WAL，使其存储一个键的多个版本。
+* 为每一个写批次分配一个唯一的提交时间戳。
+* 在压缩中保留每一个版本，同时让同一个用户键的所有版本留在同一张 SST 中。
+* 从最新快照返回每个用户键最新的已提交版本。
 
-During the refactor, you might need to change the signature of some functions from `&self` to `self: &Arc<Self>` as necessary.
+在重构过程中，你可能需要按需把一些函数的签名从 `&self` 改成 `self: &Arc<Self>`。
 
-To copy and run the test cases:
+复制并运行测试用例：
 
 ```
 cargo x copy-test --week 3 --day 2
 cargo test -p mini-lsm-starter --lib week3_day
 ```
 
-The supplied Day 2 test covers timestamped batches, raw version order, and latest-state reads. The compaction boundary case is exercised by the Day 4 suite, once transactions can pin a watermark and keep old versions live in the completed engine.
+提供的第二天测试覆盖带时间戳的批次、原始版本顺序，以及最新状态读取。压缩的边界情况由第四天的测试套件覆盖，那时事务可以钉住水位线，并在完成的引擎中让旧版本保持存活。
 
-At this intermediate point, run the focused Week 3 Day 1 and Day 2 tests. One older expectation is intentionally incompatible: the Week 2 all-tombstones test removes bottom-level tombstones, while this chapter retains every version until a watermark exists. Do not restore the old deletion rule to satisfy that test. Day 4 adds watermark-aware garbage collection and makes the complete historical suite valid again.
+在这个中间阶段，运行第三周第一天和第二天的针对性测试。有一个旧预期是有意不兼容的：第二周的「全墓碑」测试会删除底层的墓碑，而本章在存在水位线之前保留每一个版本。不要为了满足那个测试而恢复旧的删除规则。第四天会加入感知水位线的垃圾回收，使完整的历史测试套件重新有效。
 
-## Before You Begin
+## 开始之前
 
-Day 1 changed the internal representation but still wrote timestamp 0. This chapter turns timestamps into a commit order. Reads still use the latest timestamp; historical snapshots arrive on Day 3.
+第一天改变了内部表示，但仍然写入时间戳 0。本章让时间戳成为提交顺序。读操作仍然使用最新时间戳；历史快照在第三天到来。
 
-Keep these invariants in mind:
+请记住这些不变量：
 
-1. Every record in one write batch receives the same timestamp, and different committed batches receive different timestamps.
-2. The write lock covers timestamp allocation, the memtable/WAL update, and publication of the new latest commit timestamp.
-3. A scan over a user-key range must include every internal version that could determine the visible value. Included and excluded user-key bounds therefore map to different timestamp sentinels.
-4. Compaction retains all versions in this chapter. It may split output between user keys, but never between two versions of the same user key.
-5. The WAL checksum covers key length, user-key bytes, timestamp, value length, and value bytes in their encoded byte order.
+1. 一个写批次中的每条记录获得相同的时间戳，不同已提交批次获得不同的时间戳。
+2. 写锁覆盖时间戳分配、内存表/WAL 更新，以及新的最新提交时间戳的发布。
+3. 对用户键范围的一次扫描必须包含所有可能决定可见值的内部版本。因此，包含边界和不包含边界的用户键范围映射到不同的时间戳哨兵值。
+4. 本章中压缩保留所有版本。压缩可以在用户键之间切分输出，但绝不能在同一个用户键的两个版本之间切分。
+5. WAL 校验和覆盖键长度、用户键字节、时间戳、值长度和值字节，按它们编码后的字节顺序计算。
 
-> **Predict before coding:** A batch writes `a` and `b` at timestamp 7, while the memtable already contains `a@6`. What is their internal order? For the user range `(a, b]`, which timestamp sentinels exclude every version of `a` while including every version of `b`?
+> **先预测再写代码：** 一个批次在时间戳 7 写入 `a` 和 `b`，而内存表中已经存在 `a@6`。它们的内部顺序是什么？对于用户范围 `(a, b]`，哪些时间戳哨兵能够排除 `a` 的所有版本，同时包含 `b` 的所有版本？
 
-## Task 1: MemTable, Write-Ahead Log, and Read Path
+## 任务 1：内存表、预写日志与读路径
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/wal.rs
@@ -48,9 +48,9 @@ src/mem_table.rs
 src/lsm_storage.rs
 ```
 
-We have already made most of the keys in the engine to be a `KeySlice`, which contains a bytes key and a timestamp. However, some part of our system still did not consider the timestamps. In our first task, you will need to modify your memtable and WAL implementation to take timestamps into account.
+我们已经把引擎中大多数键改成了 `KeySlice`，它包含一个字节键和一个时间戳。不过，系统的某些部分仍然没有考虑时间戳。在第一个任务中，你需要修改内存表和 WAL 的实现，把时间戳考虑进来。
 
-You will need to first change the type of the `SkipMap` stored in your memtable.
+你首先需要修改内存表中 `SkipMap` 的类型。
 
 ```rust,no_run
 pub struct MemTable {
@@ -60,17 +60,17 @@ pub struct MemTable {
 }
 ```
 
-After that, you can continue to fix all compiler errors so as to complete this task.
+之后，你可以继续修复所有编译错误，从而完成这个任务。
 
 **MemTable::get**
 
-We keep the get interface so that the test cases can still probe a specific version of a key in the memtable. This interface should not be used in your read path after finishing this task. Given that we store `KeyBytes`, which is `(Bytes, u64)` in the skiplist, while the user probe the `KeySlice`, which is `(&[u8], u64)`. We have to find a way to convert the latter to a reference of the former, so that we can retrieve the data in the skiplist.
+我们保留 get 接口，以便测试用例仍然可以探查内存表中某个键的特定版本。完成本任务之后，读路径中不应再使用这个接口。由于跳表中存储的是 `KeyBytes`，即 `(Bytes, u64)`，而用户探查的是 `KeySlice`，即 `(&[u8], u64)`。我们必须找到一种方法把后者转换成前者的引用，以便从跳表中取回数据。
 
-To do this, you may temporarily cast the `&[u8]` to a `'static` slice and use `Bytes::from_static` to construct a lookup key without copying. This is sound only because the `Bytes` value is used for the synchronous lookup and cannot escape the original slice's lifetime. Storing or returning that value would make the cast unsound.
+为此，你可以临时把 `&[u8]` 转换为 `'static` 切片，并用 `Bytes::from_static` 构造查找键，从而避免拷贝。这样做之所以成立，只是因为该 `Bytes` 值仅用于同步查找，不能逃逸原始切片的生命周期。存储或返回该值都会让这次转换不再成立。
 
 <details>
 
-<summary>Spoilers: Convert u8 slice to Bytes</summary>
+<summary>剧透：把 u8 切片转换为 Bytes</summary>
 
 ```rust,no_run
 Bytes::from_static(unsafe { std::mem::transmute(key.key_ref()) })
@@ -78,29 +78,29 @@ Bytes::from_static(unsafe { std::mem::transmute(key.key_ref()) })
 
 </details>
 
-The pre-MVCC map did not need this conversion because `Bytes` implements `Borrow<[u8]>`.
+MVCC 之前的映射不需要这种转换，因为 `Bytes` 实现了 `Borrow<[u8]>`。
 
 **MemTable::put**
 
-The signature should be changed to `fn put(&self, key: KeySlice, value: &[u8])` and You will need to convert a key slice to a `KeyBytes` in your implementation.
+签名应改为 `fn put(&self, key: KeySlice, value: &[u8])`，你需要在实现中把键切片转换为 `KeyBytes`。
 
 **MemTable::scan**
 
-The signature should be changed to `fn scan(&self, lower: Bound<KeySlice>, upper: Bound<KeySlice>) -> MemTableIterator`. You will need to convert `KeySlice` to `KeyBytes` and use these as `SkipMap::range` parameters.
+签名应改为 `fn scan(&self, lower: Bound<KeySlice>, upper: Bound<KeySlice>) -> MemTableIterator`。你需要把 `KeySlice` 转换为 `KeyBytes`，并把它们用作 `SkipMap::range` 的参数。
 
 **MemTable::flush**
 
-Instead of using the default timestamp, you should now use the key timestamp when flushing the memtable to the SST.
+现在不应再使用默认时间戳，而应在把内存表落盘为 SST 时使用键的时间戳。
 
 **MemTableIterator**
 
-It should now store `(KeyBytes, Bytes)` and the return key type should be `KeySlice`.
+它现在应当存储 `(KeyBytes, Bytes)`，返回的键类型应当是 `KeySlice`。
 
-**Wal::recover** and **Wal::put**
+**Wal::recover** 与 **Wal::put**
 
-The write-ahead log should now accept a key slice instead of only user-key bytes. When serializing and deserializing a WAL record, include the timestamp and checksum the exact encoded bytes for every field.
+预写日志现在应接受键切片，而不只是用户键字节。序列化和反序列化 WAL 记录时，要包含时间戳，并对每个字段的确切编码字节计算校验和。
 
-The WAL format is as follows:
+WAL 格式如下：
 
 ```
 | key_len (exclude ts len) (u16) | key | ts (u64) | value_len (u16) | value | checksum (u32) |
@@ -108,76 +108,76 @@ The WAL format is as follows:
 
 **LsmStorageInner::get**
 
-Previously, `get` could probe sources one at a time. Now a version's timestamp, not only its source, determines visibility. The simplest correct implementation creates the same merged stream as `scan` over memtables, immutable memtables, L0 SSTs, and lower levels, while using Bloom filters to avoid impossible SST probes.
+以前，`get` 可以逐个探查各个来源。现在，决定可见性的不只是版本来自哪个来源，还有它的时间戳。最简单的正确实现是：像 `scan` 那样，在内存表、只读内存表、L0 SST 和更下层之上创建同一个归并数据流，同时用布隆过滤器避免对不可能命中的 SST 进行探查。
 
 **LsmStorageInner::scan**
 
-Incorporate the new memtable APIs and map user-key bounds to internal-key bounds. An included lower bound starts at `TS_RANGE_BEGIN`; an excluded lower bound must skip every timestamp of that user key. An included upper bound ends at `TS_RANGE_END`; an excluded upper bound stops before `TS_RANGE_BEGIN` for that user key.
+接入新的内存表 API，并把用户键边界映射到内部键边界。包含的下界从 `TS_RANGE_BEGIN` 开始；不包含的下界必须跳过该用户键的每一个时间戳。包含的上界结束于 `TS_RANGE_END`；不包含的上界停在该用户键的 `TS_RANGE_BEGIN` 之前。
 
-## Task 2: Write Path
+## 任务 2：写路径
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/lsm_storage.rs
 ```
 
-We have an `mvcc` field in `LsmStorageInner` that includes all data structures we need to use for multi-version concurrency control in this week. When you open a directory and initialize the storage engine, you will need to create that structure.
+`LsmStorageInner` 中有一个 `mvcc` 字段，它包含本周多版本并发控制所需的全部数据结构。打开目录并初始化存储引擎时，你需要创建这个结构。
 
-In `write_batch`, allocate `latest_commit_ts() + 1` and use it for every record. Hold `self.mvcc().write_lock.lock()` across allocation, insertion, and publication so that concurrent batches cannot reuse a timestamp. After every record has been accepted by the memtable/WAL, publish the new latest commit timestamp.
+在 `write_batch` 中，分配 `latest_commit_ts() + 1`，并把它用于每一条记录。在分配、插入和发布的整个过程中持有 `self.mvcc().write_lock.lock()`，这样并发批次就不会复用同一个时间戳。当所有记录都被内存表/WAL 接受之后，再发布新的最新提交时间戳。
 
-## Task 3: MVCC Compaction
+## 任务 3：MVCC 压缩
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/compact.rs
 ```
 
-Previous compaction retained only the newest value and could remove a bottom-level tombstone. With MVCC, older versions may still serve a snapshot, so those rules are not yet safe.
+以前的压缩只保留最新的值，并且可能删除底层的墓碑。在 MVCC 下，旧版本仍然可能为某个快照服务，因此那些规则目前还不安全。
 
-In this chapter, you may simply remove the logic to remove the keys. You may ignore `compact_to_bottom_level` for now, and you should keep ALL versions of a key during the compaction.
+在本章中，你可以直接删掉删除键的逻辑。目前可以忽略 `compact_to_bottom_level`，并且压缩期间应当保留一个键的**所有**版本。
 
-Also, you will need to implement the compaction algorithm in a way that the same key with different timestamps are put in the same SST file, *even if* it exceeds the SST size limit. This ensures that if a key is found in an SST in a level, it will not be in other SST files in that level, and therefore simplifying the implementation of many parts of the system.
+此外，你实现压缩算法时，要让同一个键的不同时间戳被放进同一张 SST 文件，*即使* 这超出了 SST 大小限制。这样可以保证：如果某个键在某一层的某张 SST 中被找到，它就不会出现在该层的其他 SST 文件中，从而简化系统许多部分的实现。
 
-## Task 4: LSM Iterator
+## 任务 4：LSM 迭代器
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/lsm_iterator.rs
 ```
 
-In the previous chapter, we implemented the LSM iterator to act as viewing the same key with different timestamps as different keys. Now, we will need to refactor the LSM iterator to only return the latest version of a key if multiple versions of the keys are retrieved from the child iterator.
+上一章我们实现的 LSM 迭代器，把同一个键的不同时间戳当作不同的键来对待。现在，我们需要重构 LSM 迭代器：当从子迭代器中取出同一个键的多个版本时，只返回该键的最新版本。
 
-You will need to record `prev_key` in the iterator. If we already returned the latest version of a key to the user, we can skip all old versions and proceed to the next key.
+你需要在迭代器中记录 `prev_key`。如果我们已经把某个键的最新版本返回给用户，就可以跳过所有旧版本，直接处理下一个键。
 
-At this point, you should pass all previous tests except the persistence tests from Week 2 Days 5 and 6.
+此时，除了第二周第五天和第六天的持久化测试之外，你应当通过之前的所有测试。
 
-## Chapter Checkpoint
+## 本章检查点
 
-Each write batch should now create one ordered group of versions, and latest-state reads should collapse that history back to one value per user key.
+现在每个写批次应当形成一组有序的版本，而最新状态读取应当把这段历史折叠回每个用户键的一个值。
 
-Verify these cases explicitly:
+请显式验证这些情况：
 
-1. Write the same key in three batches and confirm that a raw internal iterator sees all three timestamps in descending order while `get` returns only the newest value.
-2. Scan each combination of included and excluded bounds around a key that has several versions.
-3. Force an SST-size boundary in the middle of a key's history and confirm that every version remains in one output SST.
-4. Round-trip a WAL record and confirm its checksum covers the encoded timestamp as well as the key and value.
+1. 在三个批次中写入同一个键，确认原始内部迭代器以降序看到全部三个时间戳，而 `get` 只返回最新的值。
+2. 对一个具有多个版本的键，扫描包含与不包含边界的每一种组合。
+3. 在某个键历史的中途制造一个 SST 大小边界，确认所有版本都留在同一张输出 SST 中。
+4. 让一条 WAL 记录往返一次，确认它的校验和覆盖了编码后的时间戳以及键和值。
 
-## Test Your Understanding
+## 检验你的理解
 
-* What is the difference of `get` in the MVCC engine and the engine you built in week 2?
-* In week 2, you stop at the first memtable/level where a key is found when `get`. Can you do the same in the MVCC version?
-* How do you convert `KeySlice` into a temporary `KeyBytes` lookup key? Which lifetime condition makes the unsafe conversion sound?
-* Why must the write lock cover both timestamp selection and batch insertion?
-* Why does an excluded lower bound use the opposite timestamp sentinel from an included lower bound?
-* What observable failure occurs if compaction splits two versions of one user key across SSTs in the same level?
+* MVCC 引擎中的 `get` 与你第二周构建的引擎有什么区别？
+* 在第二周，`get` 找到某个键后会停在该内存表/层。在 MVCC 版本中你能这样做吗？
+* 你如何把 `KeySlice` 转换成临时的 `KeyBytes` 查找键？哪个生命周期条件让这次不安全的转换成立？
+* 为什么写锁必须同时覆盖时间戳选择和批次插入？
+* 为什么不含的下界与含的下界使用相反的时间戳哨兵？
+* 如果压缩把同一个用户键的两个版本切分到同一层中的不同 SST，会出现什么可观察的故障？
 
-Use the [Week 3 end-of-week self-check](./week3-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs. You can also discuss them in the Discord community.
+用[第三周周末自检](./week3-overview.md#end-of-week-self-check)来校准核心不变量。其余的设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载与假设。你也可以在 Discord 社区中讨论它们。
 
-## Bonus Tasks
+## 加分任务
 
-* **Early Stop for Memtable Gets**. Instead of creating a merge iterator over all memtables and SSTs, we can implement `get` as follows: If we find a version of a key in the memtable, we can stop searching. The same applies to SSTs.
+* **内存表 get 的提前终止**。不必在全部内存表和 SST 上创建归并迭代器，我们可以这样实现 `get`：如果在内存表中找到某个键的一个版本，就停止搜索。对 SST 同理。
 
 {{#include copyright.md}}

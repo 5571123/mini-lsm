@@ -24,7 +24,7 @@ use crate::block::BlockBuilder;
 use crate::key::{KeySlice, KeyVec};
 use crate::lsm_storage::BlockCache;
 
-/// Builds an SSTable from key-value pairs.
+/// 由键值对构建一个 SSTable。
 pub struct SsTableBuilder {
     builder: BlockBuilder,
     first_key: KeyVec,
@@ -37,7 +37,7 @@ pub struct SsTableBuilder {
 }
 
 impl SsTableBuilder {
-    /// Create a builder based on target block size.
+    /// 按目标块大小创建一个构建器。
     pub fn new(block_size: usize) -> Self {
         Self {
             data: Vec::new(),
@@ -51,7 +51,7 @@ impl SsTableBuilder {
         }
     }
 
-    /// Adds a key-value pair to SSTable
+    /// 向 SSTable 中添加一个键值对
     pub fn add(&mut self, key: KeySlice, value: &[u8]) {
         if self.first_key.is_empty() {
             self.first_key.set_from_slice(key);
@@ -67,16 +67,16 @@ impl SsTableBuilder {
             return;
         }
 
-        // create a new block builder and append block data
+        // 创建一个新的块构建器，并把块数据追加到后面
         self.finish_block();
 
-        // add the key-value pair to the next block
+        // 把该键值对加入下一个块
         assert!(self.builder.add(key, value));
         self.first_key.set_from_slice(key);
         self.last_key.set_from_slice(key);
     }
 
-    /// Get the estimated size of the SSTable.
+    /// 获取 SSTable 的估算大小。
     pub fn estimated_size(&self) -> usize {
         self.data.len()
     }
@@ -94,7 +94,7 @@ impl SsTableBuilder {
         self.data.put_u32(checksum);
     }
 
-    /// Builds the SSTable and writes it to the given path. Use the `FileObject` structure to manipulate the disk objects.
+    /// 构建 SSTable 并写入给定路径。使用 `FileObject` 结构操作磁盘对象。
     pub fn build(
         mut self,
         id: usize,

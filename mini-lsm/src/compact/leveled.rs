@@ -20,7 +20,7 @@ use crate::lsm_storage::LsmStorageState;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct LeveledCompactionTask {
-    // if upper_level is `None`, then it is L0 compaction
+    // 如果 upper_level 是 `None`，那么这是 L0 压缩
     pub upper_level: Option<usize>,
     pub upper_level_sst_ids: Vec<usize>,
     pub lower_level: usize,
@@ -79,8 +79,8 @@ impl LeveledCompactionController {
         &self,
         snapshot: &LsmStorageState,
     ) -> Option<LeveledCompactionTask> {
-        // step 1: compute target level size
-        let mut target_level_size = (0..self.options.max_levels).map(|_| 0).collect::<Vec<_>>(); // exclude level 0
+        // 第 1 步：计算目标层大小
+        let mut target_level_size = (0..self.options.max_levels).map(|_| 0).collect::<Vec<_>>(); // 不含第 0 层
         let mut real_level_size = Vec::with_capacity(self.options.max_levels);
         let mut base_level = self.options.max_levels;
         for i in 0..self.options.max_levels {
@@ -94,7 +94,7 @@ impl LeveledCompactionController {
         }
         let base_level_size_bytes = self.options.base_level_size_mb * 1024 * 1024;
 
-        // select base level and compute target level size
+        // 选择基准层并计算目标层大小
         target_level_size[self.options.max_levels - 1] =
             real_level_size[self.options.max_levels - 1].max(base_level_size_bytes);
         for i in (0..(self.options.max_levels - 1)).rev() {
@@ -108,7 +108,7 @@ impl LeveledCompactionController {
             }
         }
 
-        // Flush L0 SST is the top priority
+        // 把 L0 SST 落盘是最高优先级
         if snapshot.l0_sstables.len() >= self.options.level0_file_num_compaction_trigger {
             println!("flush L0 SST to base level {}", base_level);
             return Some(LeveledCompactionTask {
@@ -148,7 +148,7 @@ impl LeveledCompactionController {
             );
 
             let level = *level;
-            let selected_sst = snapshot.levels[level - 1].1.iter().min().copied().unwrap(); // select the oldest sst to compact
+            let selected_sst = snapshot.levels[level - 1].1.iter().min().copied().unwrap(); // 选取最旧的 sst 做压缩
             println!(
                 "compaction triggered by priority: {level} out of {:?}, select {selected_sst} for compaction",
                 priorities
@@ -230,7 +230,7 @@ impl LeveledCompactionController {
             .collect::<Vec<_>>();
         assert!(lower_level_sst_ids_set.is_empty());
         new_lower_level_ssts.extend(output);
-        // Don't sort the SST IDs during recovery because actual SSTs are not loaded at that point
+        // 恢复期间不要对 SST id 排序，因为此时实际的 SST 还没有被加载
         if !in_recovery {
             new_lower_level_ssts.sort_by(|x, y| {
                 snapshot

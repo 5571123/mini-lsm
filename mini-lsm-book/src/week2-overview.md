@@ -2,43 +2,43 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Week 2 Overview: Compaction and Persistence
+# 第二周概览：压缩与持久化
 
-![Chapter Overview](./lsm-tutorial/week2-overview.svg)
+![本章概览](./lsm-tutorial/week2-overview.svg)
 
-In Week 1, you built the core structures of an LSM storage engine and implemented its read and write interfaces. This week, you will organize SSTs on disk, compare compaction strategies, and make the engine recoverable. The first four chapters progress from the mechanics of one compaction to increasingly realistic scheduling policies. The final three chapters persist the LSM state and unflushed writes, then protect every on-disk format with checksums.
+在第一周，你构建了 LSM 存储引擎的核心结构，并实现了它的读写接口。本周，你将组织磁盘上的 SST，比较不同的压缩（compaction）策略，并让引擎具备可恢复能力。前四章从一次压缩的机制出发，逐步过渡到越来越贴近实际的调度策略。最后三章持久化 LSM 状态和未落盘的写入，然后用校验和保护每一种磁盘格式。
 
-| Chapter | Before | After |
+| 章节 | 开始前 | 完成后 |
 | --- | --- | --- |
-| [Day 1: Compaction Implementation](./week2-01-compaction.md) | Every flushed SST remains in L0. | The engine can merge L0 and L1 into a non-overlapping sorted run and read through it efficiently. |
-| [Day 2: Simple Leveled Compaction](./week2-02-simple.md) | Compaction runs only when requested explicitly. | A background controller maintains several levels using file-count ratios. |
-| [Day 3: Tiered/Universal Compaction](./week2-03-tiered.md) | Every strategy writes new SSTs through L0. | The engine can maintain newest-to-oldest tiers and trade read and space amplification for fewer rewrites. |
-| [Day 4: Leveled Compaction](./week2-04-leveled.md) | Simple leveled compaction rewrites entire levels and moves data through empty levels. | Dynamic target sizes and partial compaction reduce unnecessary rewrites and peak space usage. |
-| [Day 5: Manifest](./week2-05-manifest.md) | The LSM's file layout exists only in memory. | An append-only manifest reconstructs the durable SST layout after a restart. |
-| [Day 6: Write-Ahead Log (WAL)](./week2-06-wal.md) | Unflushed writes survive only a clean close. | WAL-backed memtables make acknowledged, synchronized writes recoverable after a crash. |
-| [Day 7: Batch Write and Checksums](./week2-07-snacks.md) | Writes are submitted one at a time, and corrupted files may be consumed silently. | The engine accepts write batches and verifies the integrity of its SSTs, manifest, and WALs. |
+| [第一天：压缩实现](./week2-01-compaction.md) | 每个落盘的 SST 都留在 L0。 | 引擎可以把 L0 和 L1 合并为一个键范围不重叠的有序段（sorted run），并高效地从中读取。 |
+| [第二天：简单分层压缩](./week2-02-simple.md) | 压缩只在被显式请求时运行。 | 后台控制器用文件数比例维护多个层。 |
+| [第三天：分层（tiered）压缩与 universal 压缩](./week2-03-tiered.md) | 每种策略都通过 L0 写入新的 SST。 | 引擎可以维护从新到旧排列的层（tier），并用更少的重写换取读放大和空间放大。 |
+| [第四天：分层（leveled）压缩](./week2-04-leveled.md) | 简单分层压缩重写整个层，并让数据经过空层。 | 动态目标大小和部分压缩减少不必要的重写和峰值空间占用。 |
+| [第五天：清单（manifest）](./week2-05-manifest.md) | LSM 的文件布局只存在于内存中。 | 只追加的清单（manifest）在重启后重建持久化的 SST 布局。 |
+| [第六天：预写日志（WAL）](./week2-06-wal.md) | 未落盘的写入只能在正常关闭时保留。 | 带预写日志（WAL）的内存表让已确认、已同步的写入在崩溃后可恢复。 |
+| [第七天：批量写与校验和](./week2-07-snacks.md) | 写入逐条提交，损坏的文件可能被静默消费。 | 引擎接受批量写（batch write），并校验 SST、清单（manifest）和 WAL 的完整性。 |
 
-## How to Use This Week
+## 如何使用本周内容
 
-Compaction code can produce plausible-looking output while violating version order, retaining stale files, or deleting tombstones too early. Persistence code can pass restart tests while still using an unsafe write order. Treat each chapter as an exercise in preserving invariants, not only as an exercise in matching simulator output.
+压缩代码可能产出看起来合理的输出，却违反版本顺序、保留过期文件，或过早删除墓碑（tombstone）。持久化代码可能通过重启测试，却仍在使用不安全的写入顺序。请把每一章当作保持不变量的练习，而不只是对齐模拟器输出的练习。
 
-For each chapter:
+每一章的做法：
 
-1. Write down the ordering and ownership invariants before implementing the task.
-2. Predict the next compaction task or recovered state for the chapter's small example.
-3. Run the focused tests and compare simulator output with the reference implementation where instructed.
-4. Trace one overwrite and one deletion through the new structure. For persistence chapters, also trace a crash between each pair of durable writes.
-5. Answer the correctness questions with a concrete state, execution, or corrupted byte sequence.
+1. 实现任务之前，先写下顺序与归属方面的不变量。
+2. 对本章的小例子，预测下一次压缩任务或恢复后的状态。
+3. 运行针对性测试，并在有指示的地方把模拟器输出与参考实现比较。
+4. 用新结构跟踪一次覆盖写和一次删除。对持久化章节，还要跟踪每一对持久化写入之间的崩溃。
+5. 用具体的状态、执行过程或损坏的字节序列回答正确性问题。
 
-The simulator measures useful structural properties, but it does not prove that reads return the newest value or that concurrent flushes are retained. Likewise, a successful reopen test exercises only a few possible crash points. Use the chapter checkpoints to review the cases that automated validation does not cover.
+模拟器度量的是有用的结构性质，但它不能证明读取会返回最新的值，也不能证明并发落盘的数据会被保留。同样，一次成功的重新打开测试只覆盖少数可能的崩溃点。请用各章的检查点复核自动验证未覆盖的情况。
 
-## Compaction and Read Amplification
+## 压缩与读放大
 
-Let us begin with compaction. In the previous part, you flushed each memtable to an L0 SST. Imagine that you have written gigabytes of data and now have 100 overlapping SSTs. Without filters, one point read might need to probe all 100 files. **Read amplification** is the amount of physical read work required for one logical read; in this simplified example, it is the number of blocks read from disk.
+从压缩开始。在上一部分，你把每个内存表落盘为一个 L0 SST。假设你已经写入了数 GB 数据，现在有 100 个键范围互相重叠的 SST。如果没有过滤器，一次点查可能要探查全部 100 个文件。**读放大**是一次逻辑读取所需的物理读工作量；在这个简化例子里，它就是从磁盘读取的块数。
 
-To reduce read amplification, we can merge the L0 SSTs into files with non-overlapping key ranges. A point lookup then needs to inspect at most one candidate SST in that group. The merge-and-rewrite process is **compaction**, and an ordered collection of non-overlapping SSTs is a **sorted run**.
+要降低读放大，我们可以把 L0 的 SST 合并成键范围互不重叠的文件。这样一次点查在同一组里最多只需要检查一个候选 SST。这个合并并重写的过程就是**压缩（compaction）**，而一组有序且范围互不重叠的 SST 就是一个**有序段（sorted run）**。
 
-To make this process clearer, let us take a look at this concrete example:
+为了让这个过程更清晰，我们看一个具体例子：
 
 ```
 SST 1: key range 00000 - key 10000, 1000 keys
@@ -46,7 +46,7 @@ SST 2: key range 00005 - key 10005, 1000 keys
 SST 3: key range 00010 - key 10010, 1000 keys
 ```
 
-The three SSTs have overlapping key ranges, so a lookup for key 02333 might probe all of them. After compaction, the engine might produce these three SSTs:
+这三个 SST 的键范围互相重叠，因此查找键 02333 可能要探查全部三个文件。压缩之后，引擎可能产出这样三个 SST：
 
 ```
 SST 4: key range 00000 - key 03000, 1000 keys
@@ -54,111 +54,111 @@ SST 5: key range 03001 - key 06000, 1000 keys
 SST 6: key range 06001 - key 10010, 1000 keys
 ```
 
-The engine merges SSTs 1, 2, and 3, resolves duplicate keys, and splits the sorted result to avoid producing one oversized file. The three output SSTs have non-overlapping ranges, so a lookup for key 02333 needs to inspect only SST 4.
+引擎合并 SST 1、2 和 3，处理重复键，并把排序结果切分，以免产出一个过大的文件。这三个输出 SST 的范围互不重叠，因此查找键 02333 只需要检查 SST 4。
 
-## Two Extremes of Compaction and Write Amplification
+## 压缩的两个极端与写放大
 
-The example suggests two extremes: never compact, or run a full compaction after every flush.
+这个例子指向两个极端：从不压缩，或者每次落盘后都做一次完整压缩。
 
-Compaction consumes CPU and I/O because it reads input files and writes replacement files. Never compacting avoids rewrites but causes high read amplification. Always running full compaction lowers read amplification but repeatedly rewrites the entire database.
+压缩消耗 CPU 和 I/O，因为它要读取输入文件并写出替换文件。从不压缩避免了重写，但会造成高读放大。总是做完整压缩降低了读放大，却会反复重写整个数据库。
 
 ![no compaction](./lsm-tutorial/week2-00-two-extremes-1.svg)
 
-<p class="caption">No Compaction at All</p>
+<p class="caption">完全不压缩</p>
 
 ![always full compaction](./lsm-tutorial/week2-00-two-extremes-2.svg)
 
-<p class="caption">Always compact when new SST being flushed</p>
+<p class="caption">每次落盘新 SST 时都压缩</p>
 
-**Write amplification** is the ratio of total physical bytes written to the logical bytes flushed into the LSM tree. With no compaction, the ratio is 1x because each SST is written once and never rewritten. Compacting everything after every flush has very high write amplification: after 100 equal-sized flushes, the engine rewrites approximately 2 + 3 + ... + 100 SSTs' worth of data. It therefore writes about 5,000 SSTs' worth for 100 SSTs of logical input, or roughly 50x write amplification.
+**写放大**是写出的物理字节总量与流入 LSM 树的逻辑字节量之比。不压缩时，这个比值是 1x，因为每个 SST 只写一次，从不重写。每次落盘后压缩全部数据则有很高的写放大：100 次等大小的落盘之后，引擎大约重写 2 + 3 + ... + 100 个 SST 的数据量。因此对于 100 个 SST 的逻辑输入，它大约写了 5,000 个 SST 的量，写放大约为 50x。
 
-A good compaction strategy balances read, write, and space amplification. A general-purpose LSM storage engine cannot minimize all three simultaneously unless it can exploit a specific workload pattern. Because compaction happens in the background, the engine can select a strategy and tune its parameters as the workload changes. Compaction policy is therefore an explicit choice about which costs to trade for others.
+好的压缩策略在读放大、写放大和空间放大之间取得平衡。通用 LSM 存储引擎无法同时把三者都降到最低，除非它能利用某种特定的工作负载模式。由于压缩在后台进行，引擎可以根据工作负载的变化选择策略并调整参数。因此压缩策略就是对「用哪些代价换哪些收益」的明确选择。
 
 ![compaction tradeoffs](./lsm-tutorial/week2-00-triangle.svg)
 
-A common production workload begins with a high-throughput bulk ingest and later shifts to small online transactions. During ingestion, the engine can favor low write amplification. Before serving the online workload, it can retune compaction for lower read amplification and reorganize the existing data.
+常见的生产工作负载先经历高吞吐的批量导入，之后转为小型在线事务。在导入阶段，引擎可以偏向低写放大。在开始服务在线负载之前，它可以重新调整压缩参数以降低读放大，并重组已有数据。
 
-For a time-series workload, users might append and expire data in time order. Such a pattern can have low amplification even with little compaction. In practice, observe the workload and its requirements rather than selecting a policy from aggregate ratios alone.
+对于时间序列类工作负载，用户可能按时间顺序追加并过期数据。这种模式下即使压缩很少，放大也可以很低。在实践中，应当观察工作负载及其需求，而不是仅凭汇总的比值选择策略。
 
-## Compaction Strategies Overview
+## 压缩策略概览
 
-Compaction strategies control the number and sizes of sorted runs to keep read amplification within a chosen bound. They generally fall into two categories: leveled and tiered.
+压缩策略控制有序段的数量和大小，从而把读放大控制在选定的范围内。它们通常分为两类：分层（leveled）和分层（tiered）。
 
-In leveled compaction, the user specifies a maximum number of levels, excluding L0. Each level is one sorted run. A compaction merges data from two adjacent levels and places the output in the lower one, so a relatively small sorted run is often merged into a much larger run. Target level sizes grow geometrically according to a configured multiplier.
+在分层（leveled）压缩中，用户指定最大层数（不含 L0）。每一层是一个有序段。一次压缩合并两个相邻层的数据，并把输出放到下层，因此一个相对较小的有序段常常被合并进一个大得多的有序段。各层的目标大小按配置的倍数几何增长。
 
 ![leveled compaction](./lsm-tutorial/week2-00-leveled.svg)
 
-In tiered compaction, each flush can create a new sorted run, or tier, and the engine merges tiers to control their count. The policy often merges runs of similar sizes, reducing write amplification compared with repeatedly merging a small run into a large one. Allowing too many tiers, however, increases read amplification. This course implements RocksDB's universal compaction, a tiered strategy.
+在分层（tiered）压缩中，每次落盘都可以创建一个新的有序段，也就是一个层（tier），引擎通过合并层来控制层的数量。该策略常常合并大小相近的有序段，与反复把一个小有序段合并进大有序段相比，写放大更低。不过，允许过多的层会增加读放大。本课程实现 RocksDB 的 universal 压缩，这是一种分层（tiered）策略。
 
 ![tiered compaction](./lsm-tutorial/week2-00-tiered.svg)
 
-## Space Amplification
+## 空间放大
 
-The most intuitive measure of **space amplification** is the physical space used by the LSM engine divided by the logical size of the live user data. Tombstones and obsolete versions consume space until compaction can remove them.
+**空间放大**最直观的度量是 LSM 引擎占用的物理空间除以有效用户数据的逻辑大小。在压缩清除之前，墓碑（tombstone）和过期版本一直占用空间。
 
-The engine cannot know the exact logical data size without scanning for obsolete versions. One practical estimate divides the total SST size by the last level's size. This estimate assumes a steady-state workload whose logical size remains roughly constant: the bottom level approximates an older complete snapshot, while upper levels contain subsequent changes. After a full compaction moves all live data to the bottom, the estimate approaches 1x.
+如果不扫描过期版本，引擎无法知道精确的逻辑数据大小。一种实用的估算方法是用 SST 总大小除以最后一层的大小。这个估算假设工作负载处于稳态，逻辑大小大致不变：底层近似一个较早的完整快照，而上层包含之后的变更。一次完整压缩把所有有效数据搬到最底层之后，这个估算值接近 1x。
 
-Compaction also requires temporary space because its input files cannot be removed before the output is complete and durable. A full compaction may therefore require free space comparable to the current database size.
+压缩还需要临时空间，因为在输出完成并持久化之前，输入文件不能删除。因此一次完整压缩可能需要与当前数据库大小相当的空闲空间。
 
-The compaction simulator visualizes each scheduling decision and reports its amplification statistics. The tests check only a few structural properties, so inspect the simulator output closely and compare it with the reference implementation.
+压缩模拟器会把每一次调度决策可视化，并报告放大统计。测试只检查少数结构性质，因此请仔细查看模拟器输出，并与参考实现比较。
 
-## Persistence
+## 持久化
 
-After implementing the compaction algorithms, you will add two persistence components: the manifest, which records structural changes to the LSM tree, and the WAL, which preserves memtable updates before they are flushed to SSTs. Together they let the engine reconstruct both its on-disk layout and its unflushed state after a restart.
+实现压缩算法之后，你将加入两个持久化组件：清单（manifest）记录 LSM 树的结构变更，预写日志（WAL）在内存表落盘为 SST 之前保留它的更新。两者结合，让引擎在重启后既能重建磁盘布局，也能重建未落盘的状态。
 
-If you do not want to explore every compaction policy, complete Days 1 and 2 and then continue to persistence. Universal compaction and dynamic leveled compaction are not required to build a working Week 2 engine.
+如果你不想探索每一种压缩策略，完成第一天和第二天后就可以继续做持久化。要构建一个可工作的第二周引擎，并不需要 universal 压缩和动态分层压缩。
 
-## Snack Time
+## 加餐时间
 
-After implementing compaction and persistence, we will have a short chapter on implementing the batch write interface and checksums.
+实现压缩和持久化之后，我们会用一章较短的篇幅讲批量写接口和校验和的实现。
 
-Before moving to Week 3, check that you can explain:
+进入第三周之前，确认你能解释：
 
-- how every compaction input is ordered and why the newest version wins;
-- when a tombstone may be discarded and why dropping it earlier can resurrect a value;
-- how leveled and tiered policies trade read, write, and space amplification;
-- how a compaction result is installed without losing an L0 flush that completed concurrently;
-- which facts belong in the manifest and which bytes belong in a WAL;
-- the required durable-write order for creating and deleting files;
-- what each checksum covers and how a decoder finds that exact byte range.
+- 压缩的每个输入如何排序，以及为什么最新的版本胜出；
+- 墓碑（tombstone）何时可以丢弃，以及为什么过早丢弃它会让某个值重新出现；
+- 分层（leveled）和分层（tiered）策略如何取舍读放大、写放大和空间放大；
+- 压缩结果如何在不丢失并发完成的 L0 落盘的前提下安装；
+- 哪些事实属于清单（manifest），哪些字节属于 WAL；
+- 创建和删除文件时要求的持久化写入顺序；
+- 每个校验和覆盖什么内容，以及解码器如何找到那段确切的字节范围。
 
-## End-of-Week Self-Check
+## 周末自检
 
-Answer with a concrete file set or event order. These scenarios deliberately combine material from several chapters.
+请用具体的文件集合或事件顺序作答。这些场景刻意组合了多章的内容。
 
-### 1. Compaction Priority and Concurrent Flush
+### 1. 压缩优先级与并发落盘
 
-A full-compaction task captures L0 files `[5, 4]` and bottom-level files `[1, 2]`. File 6 is flushed while the task writes its output. File 5 contains the newest entry for `k`, a tombstone; file 1 contains `k -> old`. What remains in L0 after installation, and does `k` appear in the compaction output?
+一个完整压缩任务选取了 L0 文件 `[5, 4]` 和底层文件 `[1, 2]`。任务写出输出期间，文件 6 被落盘。文件 5 包含 `k` 的最新条目，是一个墓碑（tombstone）；文件 1 包含 `k -> old`。安装结果之后 L0 里还剩什么，`k` 会出现在压缩输出中吗？
 
 <details>
 
-<summary>Answer criteria</summary>
+<summary>答案要点</summary>
 
-L0 retains `[6]`; result application removes only the captured files. File 5 has priority over file 1. Because the task includes the bottom level and therefore every possible older version, both the tombstone and `k -> old` may disappear. A non-bottom task would need to retain the tombstone.
+L0 保留 `[6]`；应用结果只移除被选取的文件。文件 5 的优先级高于文件 1。由于该任务包含底层，因而包含该键所有可能更旧的版本，墓碑和 `k -> old` 都可以消失。不涉及底层的任务则需要保留墓碑。
 
 </details>
 
-### 2. Crash-Safe File Installation
+### 2. 崩溃安全的文件安装
 
-Order these events for a flush: write the SST, synchronize the SST, synchronize the directory entry, append and synchronize the manifest record. When may an obsolete input file be deleted?
+为一次落盘排序这些事件：写 SST、同步 SST、同步目录项、追加并同步清单（manifest）记录。过期输入文件何时可以删除？
 
 <details>
 
-<summary>Answer criteria</summary>
+<summary>答案要点</summary>
 
-The new SST contents and its directory entry must be durable before the durable manifest may reference the file. Obsolete inputs may be deleted only after the replacement manifest record is durable, followed by another directory synchronization. A crash may leave an unreferenced extra file, but recovery must never be directed to a missing file.
+新 SST 的内容和它的目录项必须在持久化的清单（manifest）引用该文件之前就已持久化。过期输入只能在替换用的清单（manifest）记录持久化、并再次同步目录之后才删除。崩溃可能留下一个未被引用的多余文件，但恢复过程绝不能被指向一个缺失的文件。
 
 </details>
 
-### 3. Reading Amplification Numbers
+### 3. 读懂放大数字
 
-Two policies report different amplification. What must you define before deciding which policy is better?
+两个策略报告了不同的放大。在判断哪个策略更好之前，你必须先定义什么？
 
 <details>
 
-<summary>Answer criteria</summary>
+<summary>答案要点</summary>
 
-Define the workload and the numerator and denominator of every metric: physical read work per logical read, total physical bytes written per logical bytes entering the LSM, and physical storage per live logical data. Also state whether the measurement includes temporary compaction space, cache hits, WAL writes, and device-level write amplification. A policy is not universally better: workload latency and resource limits determine which tradeoff matters.
+定义工作负载，以及每个指标的分子和分母：每次逻辑读对应的物理读工作量、每流入 LSM 一个逻辑字节所写出的物理字节总量、每份有效逻辑数据占用的物理存储。还要说明度量是否包含压缩临时空间、缓存命中、WAL 写入和设备级写放大。一个策略不会普遍更好：工作负载的延迟要求和资源限制决定了哪种取舍更重要。
 
 </details>
 

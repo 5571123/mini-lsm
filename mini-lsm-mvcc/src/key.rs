@@ -22,10 +22,10 @@ pub type KeySlice<'a> = Key<&'a [u8]>;
 pub type KeyVec = Key<Vec<u8>>;
 pub type KeyBytes = Key<Bytes>;
 
-/// For testing purpose, should not use anywhere in your implementation.
+/// 仅用于测试，不应在你的实现中的任何位置使用。
 pub const TS_ENABLED: bool = true;
 
-/// Temporary, should remove after implementing full week 3 day 1 + 2.
+/// 临时的，在完成 Week 3 Day 1 + 2 的全部内容后应删除。
 pub const TS_DEFAULT: u64 = 0;
 
 pub const TS_MAX: u64 = u64::MAX;
@@ -60,17 +60,17 @@ impl Key<Vec<u8>> {
         Self(Vec::new(), TS_DEFAULT)
     }
 
-    /// Create a `KeyVec` from a `Vec<u8>` and a ts. Will be removed in week 3.
+    /// 由 `Vec<u8>` 和 ts 创建一个 `KeyVec`。将在 Week 3 中移除。
     pub fn from_vec_with_ts(key: Vec<u8>, ts: u64) -> Self {
         Self(key, ts)
     }
 
-    /// Clears the key and set ts to 0.
+    /// 清空键，并把 ts 置为 0。
     pub fn clear(&mut self) {
         self.0.clear()
     }
 
-    /// Append a slice to the end of the key
+    /// 把一个切片追加到键的末尾
     pub fn append(&mut self, data: &[u8]) {
         self.0.extend(data)
     }
@@ -79,7 +79,7 @@ impl Key<Vec<u8>> {
         self.1 = ts;
     }
 
-    /// Set the key from a slice without re-allocating.
+    /// 由切片设置键，不重新分配内存。
     pub fn set_from_slice(&mut self, key_slice: KeySlice) {
         self.0.clear();
         self.0.extend(key_slice.0);
@@ -120,7 +120,7 @@ impl Key<Bytes> {
         Key(&self.0, self.1)
     }
 
-    /// Create a `KeyBytes` from a `Bytes` and a ts.
+    /// 由 `Bytes` 和 ts 创建一个 `KeyBytes`。
     pub fn from_bytes_with_ts(bytes: Bytes, ts: u64) -> KeyBytes {
         Key(bytes, ts)
     }
@@ -147,12 +147,12 @@ impl<'a> Key<&'a [u8]> {
         Key(self.0.to_vec(), self.1)
     }
 
-    /// Create a key slice from a slice with the default timestamp.
+    /// 由切片创建一个使用默认时间戳的键切片。
     pub fn from_slice(slice: &'a [u8]) -> Self {
         Self(slice, TS_DEFAULT)
     }
 
-    /// Create a key slice from a slice and an explicit timestamp.
+    /// 由切片和显式指定的时间戳创建一个键切片。
     pub fn from_slice_with_ts(slice: &'a [u8], ts: u64) -> Self {
         Self(slice, ts)
     }

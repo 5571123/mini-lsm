@@ -151,7 +151,7 @@ fn test_task2_auto_flush() {
 
     let value = "1".repeat(1024); // 1KB
 
-    // approximately 6MB
+    // 约 6MB
     for i in 0..6000 {
         storage
             .put(format!("{i}").as_bytes(), value.as_bytes())

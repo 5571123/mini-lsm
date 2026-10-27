@@ -2,83 +2,83 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Week 1 Overview: Mini-LSM
+# 第一周概览：Mini-LSM
 
-![Chapter Overview](./lsm-tutorial/week1-overview.svg)
+![本章概览](./lsm-tutorial/week1-overview.svg)
 
-In the first week, you will build the storage engine's core formats, read path, and write path. By the end of its seven chapters, you will have a working LSM-based key-value store.
+在第一周，你将构建存储引擎的核心格式、读路径和写路径。完成这七章之后，你将得到一个可工作的、基于 LSM 的键值存储。
 
-| Chapter | Before | After |
+| 章节 | 开始前 | 完成后 |
 | --- | --- | --- |
-| [Day 1: Memtable](./week1-01-memtable.md) | The storage interfaces are stubs. | The engine supports in-memory point reads, writes, deletes, and memtable freezing. |
-| [Day 2: Merge Iterator](./week1-02-merge-iterator.md) | The engine can query one key at a time. | It can scan an ordered range across multiple memtables. |
-| [Day 3: Block Encoding](./week1-03-block.md) | All data structures are in memory. | Key-value pairs can be encoded into and decoded from an on-disk block format. |
-| [Day 4: SST Encoding](./week1-04-sst.md) | The engine has individual blocks. | Blocks form seekable SSTs whose data is loaded on demand and cached. |
-| [Day 5: Read Path](./week1-05-read-path.md) | Memtables and SSTs have separate iterators. | Point reads and scans produce one logical view across both. |
-| [Day 6: Write Path](./week1-06-write-path.md) | The test harness creates SSTs for you. | The engine flushes frozen memtables to L0 and filters irrelevant SSTs. |
-| [Day 7: SST Optimizations](./week1-07-sst-optimizations.md) | The engine is correct but performs avoidable I/O and stores repeated key bytes. | Bloom filters reduce point-read I/O, and prefix encoding makes blocks smaller. |
+| [第一天：内存表](./week1-01-memtable.md) | 存储接口还是空壳。 | 引擎支持内存内的点查、写入、删除，以及内存表（memtable）的冻结。 |
+| [第二天：归并迭代器](./week1-02-merge-iterator.md) | 引擎一次只能查询一个键。 | 引擎可以在多个内存表上扫描有序范围。 |
+| [第三天：块编码](./week1-03-block.md) | 所有数据结构都在内存中。 | 键值对可以编码为磁盘上的块格式，也可以从该格式解码。 |
+| [第四天：SSTable 编码](./week1-04-sst.md) | 引擎只有单个块。 | 块组成可定位的 SSTable，其数据按需加载并被缓存。 |
+| [第五天：读路径](./week1-05-read-path.md) | 内存表和 SSTable 各有独立的迭代器。 | 点查和扫描在两者之上给出同一个逻辑视图。 |
+| [第六天：写路径](./week1-06-write-path.md) | 测试框架替你创建 SSTable。 | 引擎把冻结的内存表落盘到 L0，并过滤掉无关的 SSTable。 |
+| [第七天：SSTable 优化](./week1-07-sst-optimizations.md) | 引擎正确，但存在可避免的 I/O，并且重复存储键的字节。 | 布隆过滤器减少点查 I/O，前缀编码让块更小。 |
 
-## How to Use This Week
+## 如何使用本周内容
 
-The implementation is the laboratory in which you explore the design. Passing the tests is an important checkpoint, but it is not the final learning goal: the provided tests cannot cover every boundary condition, malformed input, or concurrent execution.
+你通过实现来探索设计。通过测试是一个重要检查点，但不是最终的学习目标：提供的测试无法覆盖每一个边界条件、畸形输入或并发执行。
 
-For each chapter:
+每一章的做法：
 
-1. Read the capability and core-invariant sections before writing code.
-2. Predict the behavior of the small examples without running them.
-3. Implement the tasks and run the chapter tests.
-4. Answer the correctness questions with evidence from your implementation. When a question asks what can go wrong, construct a minimal counterexample or test.
-5. Compare with the reference solution only after making a serious attempt. A different implementation can still be correct if it preserves the same invariants.
+1. 写代码之前，先读能力目标和核心不变量两节。
+2. 不运行代码，先预测小例子的行为。
+3. 实现任务并运行本章测试。
+4. 用你实现中的证据回答正确性问题。当问题问「哪里会出错」时，构造一个最小反例或测试。
+5. 只有在认真尝试之后，再与参考实现比较。只要保持相同的不变量，不同的实现也可以是正确的。
 
-You may use an LLM or other coding tools, but treat generated code as an untrusted contribution: identify the invariants first, review the result against them, and add tests that exercise behavior not covered by the supplied suite. The ability to explain, challenge, and validate an implementation matters more than who typed it.
+你可以使用 LLM 或其他编程工具，但要把生成的代码当作不可信的贡献：先确定不变量，再对照不变量审查结果，并补充测试来覆盖提供的测试集没有涉及的行为。能否解释、质疑并验证一个实现，比代码由谁敲出来更重要。
 
-At the end of the week, your storage engine should be able to handle `get`, `scan`, `put`, and `delete` requests. The remaining work is to persist the LSM state across restarts and organize SSTs on disk more efficiently. You will have a working **Mini-LSM** storage engine.
+到本周末，你的存储引擎应能处理 `get`、`scan`、`put` 和 `delete` 请求。剩下的工作是在重启后保留 LSM 状态，以及更高效地组织磁盘上的 SSTable。你将得到一个可工作的 **Mini-LSM** 存储引擎。
 
-Before moving to Week 2, check that you can explain:
+进入第二周之前，确认你能解释：
 
-- why each component introduced this week is necessary;
-- the central correctness invariant of each component;
-- one plausible bug in each component and a test that exposes it;
-- which data is in memory, which data is on disk, and which structure owns each piece;
-- how the read and write paths choose the newest visible value for a key.
+- 本周引入的每个组件为什么必要；
+- 每个组件的核心正确性不变量；
+- 每个组件中一个可能出现的 bug，以及能暴露它的测试；
+- 哪些数据在内存、哪些在磁盘，各部分由哪个结构持有；
+- 读写路径如何为一个键选择最新的可见值。
 
-## End-of-Week Self-Check
+## 周末自检
 
-Try these scenarios without running the code. Open the answer criteria only after writing down both the result and the invariant that produces it.
+不运行代码，先想这几个场景。先写下结果和产生该结果的不变量，再展开答案要点。
 
-### 1. One View from Several Sources
+### 1. 多个来源，一个视图
 
-The mutable memtable contains `b -> delete` and `d -> 4`. The newest immutable memtable contains `a -> 1` and `b -> 2`. L0, from newest to oldest, contains one SST with `a -> 0`, `c -> 3`, and `d -> 3`. What do `get(a)`, `get(b)`, and the inclusive scan `[a, d]` return?
+可写内存表包含 `b -> delete` 和 `d -> 4`。最新的只读内存表包含 `a -> 1` 和 `b -> 2`。L0 从新到旧只有一个 SSTable，包含 `a -> 0`、`c -> 3` 和 `d -> 3`。`get(a)`、`get(b)` 以及闭区间扫描 `[a, d]` 分别返回什么？
 
 <details>
 
-<summary>Answer criteria</summary>
+<summary>答案要点</summary>
 
-`get(a)` returns `1`, because every memtable is newer than every L0 SST. `get(b)` returns not found: the tombstone wins and must stop the search. The scan returns `a -> 1, c -> 3, d -> 4`. A complete explanation identifies where duplicate keys are resolved before tombstones are hidden and why the final stream is sorted and unique.
+`get(a)` 返回 `1`，因为每个内存表都比每个 L0 SSTable 新。`get(b)` 返回不存在：墓碑（tombstone）胜出，并且必须终止搜索。扫描返回 `a -> 1, c -> 3, d -> 4`。完整的解释需要指出重复键在何处、于墓碑被隐藏之前完成裁决，以及最终输出流为什么有序且唯一。
 
 </details>
 
-### 2. Freeze and Flush without Changing Results
+### 2. 冻结与落盘不改变结果
 
-The immutable-memtable IDs are `[7, 6, 5]` from newest to oldest, and L0 IDs are `[4, 3]` from newest to oldest. After one correct flush, what are the two lists? Which logical read result is allowed to change because of the flush?
+只读内存表的 ID 从新到旧为 `[7, 6, 5]`，L0 的 ID 从新到旧为 `[4, 3]`。执行一次正确的落盘之后，这两个列表分别是什么？哪种逻辑读结果允许因这次落盘而改变？
 
 <details>
 
-<summary>Answer criteria</summary>
+<summary>答案要点</summary>
 
-The oldest immutable memtable, ID 5, is flushed, so the lists become `imm_memtables = [7, 6]` and `l0_sstables = [5, 4, 3]`. The SST reuses the memtable ID. No logical read result may change: the state update replaces one physical representation with another at the same recency position.
+最旧的只读内存表（ID 5）被落盘，因此列表变为 `imm_memtables = [7, 6]` 和 `l0_sstables = [5, 4, 3]`。该 SSTable 复用内存表的 ID。不允许任何逻辑读结果改变：状态更新只是把一种物理表示替换成位于同一新旧位置上的另一种物理表示。
 
 </details>
 
-### 3. Safe Optimizations
+### 3. 安全的优化
 
-An SST's range contains `k`, but its Bloom filter reports “may contain,” and an SST seek lands on the next key `m`. May `get(k)` return `m`? Would the answer change if the Bloom filter reported “definitely absent”?
+某个 SSTable 的键范围包含 `k`，但它的布隆过滤器报告「可能存在」，而对该 SSTable 的定位落在下一个键 `m` 上。`get(k)` 可以返回 `m` 吗？如果布隆过滤器报告「一定不存在」，答案会不同吗？
 
 <details>
 
-<summary>Answer criteria</summary>
+<summary>答案要点</summary>
 
-“May contain” is not proof of membership, so the engine must seek and then check exact key equality; it cannot return `m`. A valid “definitely absent” result lets the engine skip the SST entirely. Both optimizations may reduce work but must not change the value returned.
+「可能存在」不能证明成员存在，因此引擎必须先定位，再检查键是否完全相等；它不能返回 `m`。而有效的「一定不存在」结果允许引擎完全跳过该 SSTable。两种优化都可以减少工作量，但都不能改变返回的值。
 
 </details>
 

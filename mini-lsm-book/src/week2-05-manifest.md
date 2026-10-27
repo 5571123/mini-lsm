@@ -2,104 +2,104 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Manifest
+# 清单（manifest）
 
-![Chapter Overview](./lsm-tutorial/week2-05-overview.svg)
+![本章概览](./lsm-tutorial/week2-05-overview.svg)
 
-By the end of this chapter, you will be able to:
+学完本章，你将能够：
 
-* Encode and append structural changes to the manifest.
-* Order SST, directory, and manifest synchronization so recovery never references an SST that was not made durable.
-* Replay manifest records, open the live SSTs, and restore the next unused file ID.
-* Flush all memtables during a clean close when WALs are disabled.
+* 把结构变更编码并追加到清单（manifest）中。
+* 安排好 SST、目录和清单（manifest）的同步顺序，使恢复过程永远不会引用一个未持久化的 SST。
+* 回放清单（manifest）记录，打开有效 SST，并恢复下一个未使用的文件 ID。
+* 在禁用 WAL 时，于正常关闭期间落盘所有内存表。
 
-To copy the test cases into the starter code and run them:
+把测试用例复制到起始代码并运行：
 
 ```
 cargo x copy-test --week 2 --day 5
 cargo x scheck
 ```
 
-## Before You Begin
+## 开始之前
 
-Until this chapter, `LsmStorageState` is authoritative only while the process is running. The SST files survive a restart, but filenames alone do not say which files are live, which level or tier owns them, or which compaction replaced them.
+在本章之前，`LsmStorageState` 只在进程运行期间是权威的。SST 文件在重启后仍然存在，但仅凭文件名无法说明哪些文件有效、它们属于哪一层（level）或哪一层（tier），或者哪次压缩替换了它们。
 
-Keep these invariants in mind:
+请记住这些不变量：
 
-1. The manifest is an ordered, append-only log of structural state changes. Replaying every record from an empty state must reconstruct the same live file layout.
-2. An SST file and its directory entry must be durable before a manifest record is allowed to reference it.
-3. A file made obsolete by a durable manifest record may be deleted afterward. Recovery must tolerate the old file still being present because it is no longer part of the logical state.
-4. Manifest replay determines the live SST IDs before the engine opens SST metadata. Leveled SSTs are sorted by first key only after all live files have been opened.
-5. `next_sst_id` must be greater than every ID observed in recovered SSTs and, after Day 6, memtables.
+1. 清单（manifest）是结构状态变更的有序、只追加日志。从空状态开始回放每一条记录，必须重建出相同的有效文件布局。
+2. 在允许清单（manifest）记录引用某个 SST 文件之前，该文件及其目录项必须已经持久化。
+3. 被持久化的清单（manifest）记录标记为过期的文件，之后可以删除。恢复过程必须容忍旧文件仍然存在，因为它已不再属于逻辑状态。
+4. 清单（manifest）回放会在引擎打开 SST 元数据之前确定有效 SST ID。只有在所有有效文件都打开之后，分层（leveled）SST 才按第一个键排序。
+5. `next_sst_id` 必须大于在恢复出的 SST 以及（第六天之后）内存表中观察到的每一个 ID。
 
-> **Predict before coding:** The engine has written and synced a new SST but crashes before appending its flush record. What state should recovery produce, and what kind of file is left behind? Now reverse the unsafe order: the manifest is synced before the new SST's directory entry. What can recovery attempt to open after a power loss?
+> **写代码前先预测：** 引擎已经写入并同步了一个新 SST，但在追加它的落盘记录之前崩溃。恢复应产出什么状态，会留下什么样的文件？现在把不安全的顺序反过来：清单（manifest）在新的 SST 目录项之前被同步。断电之后恢复会尝试打开什么？
 
-## Task 1: Manifest Encoding
+## 任务 1：清单编码
 
-The system uses a manifest to record structural operations in the engine. For now, there are two record types: compaction and SST flush. On restart, the engine reads the manifest, reconstructs the logical state, and opens the referenced SST files.
+系统用清单（manifest）记录引擎中的结构操作。目前有两种记录类型：压缩和 SST 落盘。重启时，引擎读取清单（manifest），重建逻辑状态，并打开被引用的 SST 文件。
 
-One simple design would rewrite the complete state as JSON after every flush or compaction. That approach becomes expensive when the database contains thousands of SSTs, so Mini-LSM uses an append-only manifest instead.
+一种简单的设计是在每次落盘或压缩之后，把完整状态重写为 JSON。当数据库包含数千个 SST 时，这种做法开销很大，因此 Mini-LSM 改用只追加的清单（manifest）。
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/manifest.rs
 ```
 
-Encode each record as JSON with `serde_json::to_vec`, append it, and synchronize the manifest. During recovery, `serde_json::Deserializer::from_slice` can stream adjacent JSON values without an explicit record length.
+用 `serde_json::to_vec` 把每条记录编码为 JSON，追加它，并同步清单（manifest）。恢复期间，`serde_json::Deserializer::from_slice` 可以在没有显式记录长度的情况下流式读取相邻的 JSON 值。
 
 
-The manifest format is like:
+清单（manifest）格式如下：
 
 ```
 | JSON record | JSON record | JSON record | JSON record |
 ```
 
-At this stage, the format does not store each record's byte length. Day 7 will add explicit framing and checksums.
+在这个阶段，该格式不保存每条记录的字节长度。第七天会加入显式的分帧与校验和。
 
-Over time, the manifest can become large. A production engine can periodically replace it with a snapshot of the current state followed by a fresh log; this is a bonus task.
+随着时间推移，清单（manifest）可能变得很大。生产引擎可以周期性地用当前状态的快照加一份新的日志来替换它；这是一个附加任务。
 
 
-## Task 2: Write Manifests
+## 任务 2：写入清单
 
-Now append manifest records whenever the LSM structure changes. You will need to modify:
+现在，每当 LSM 结构发生变化时都要追加清单（manifest）记录。你需要修改：
 
 ```
 src/lsm_storage.rs
 src/compact.rs
 ```
 
-For now, the manifest has two record types: SST flush and compaction. An SST flush record stores the ID written to disk. A compaction record stores the task and its output SST IDs. Whenever an operation creates files, first sync those files and the storage directory. Only then append the corresponding manifest record and sync the manifest. Delete obsolete input files after that record is durable, then sync the directory again. The manifest file should be written to `<path>/MANIFEST`.
+目前清单（manifest）有两种记录类型：SST 落盘和压缩。SST 落盘记录保存写入磁盘的 ID。压缩记录保存任务及其输出的 SST ID。每当一个操作创建文件时，先同步这些文件和存储目录。只有之后才追加对应的清单（manifest）记录并同步清单（manifest）。在该记录持久化之后再删除过期的输入文件，然后再次同步目录。清单（manifest）文件应写入 `<path>/MANIFEST`。
 
-Implement `sync_dir` with `File::open(dir).sync_all()?`. Synchronizing a file persists its contents; synchronizing the directory persists additions and removals of filenames.
+用 `File::open(dir).sync_all()?` 实现 `sync_dir`。同步文件会把其内容持久化；同步目录会把文件名的增加和删除持久化。
 
-Append a compaction record for both background compaction and a user-requested full compaction.
+无论后台压缩还是用户请求的完整压缩，都要追加一条压缩记录。
 
-## Task 3: Flush on Close
+## 任务 3：关闭时落盘
 
-In this task, you will need to modify:
-
-```
-src/lsm_storage.rs
-```
-
-Implement `close`. When `self.options.enable_wal` is false, flush every non-empty memtable before stopping the engine so a clean shutdown preserves all writes.
-
-## Task 4: Recover from the State
-
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/lsm_storage.rs
 ```
 
-Modify `open` to replay the manifest into an initially empty LSM state. Apply flush and compaction records to recover the live SST IDs, then open those files and populate the `sstables` map. Track the maximum ID, create a new memtable with the next ID, and advance `next_sst_id` again.
+实现 `close`。当 `self.options.enable_wal` 为 false 时，在停止引擎之前落盘每个非空内存表，使正常关闭能保留所有写入。
 
-Leveled compaction normally sorts result IDs by first key. During manifest replay, however, the SST objects and their key ranges are not loaded yet. Honor `apply_compaction_result`'s `in_recovery` flag and defer sorting. Once every live SST is open, sort each leveled run by first key.
+## 任务 4：从状态中恢复
 
-Alternatively, store each SST's key range in the manifest, as systems such as RocksDB and BadgerDB do. Result application could then use the same ordering logic during recovery and normal execution.
+本任务需要修改：
 
-You may use the mini-lsm-cli to test your implementation.
+```
+src/lsm_storage.rs
+```
+
+修改 `open`，把清单（manifest）回放到一个初始为空的 LSM 状态中。应用落盘和压缩记录以恢复有效 SST ID，然后打开这些文件并填充 `sstables` 映射。跟踪最大的 ID，用下一个 ID 创建新的内存表，并再次推进 `next_sst_id`。
+
+分层（leveled）压缩通常按第一个键给结果 ID 排序。然而在清单（manifest）回放期间，SST 对象及其键范围尚未加载。请尊重 `apply_compaction_result` 的 `in_recovery` 标志并推迟排序。等到所有有效 SST 都打开之后，再按第一个键对每个分层（leveled）有序段排序。
+
+另一种做法是把每个 SST 的键范围存进清单（manifest），RocksDB 和 BadgerDB 等系统就是这么做的。这样结果应用在恢复和正常执行时就可以使用同一套排序逻辑。
+
+你可以用 mini-lsm-cli 测试你的实现。
 
 ```
 cargo run --bin mini-lsm-cli
@@ -109,34 +109,34 @@ cargo run --bin mini-lsm-cli
 get 1500
 ```
 
-## Chapter Checkpoint
+## 本章检查点
 
-After a clean close without WALs, the engine should have no non-empty memtables. Reopening it should replay the manifest, open exactly the referenced SSTs, restore leveled ordering after metadata becomes available, and allocate an ID greater than every recovered file ID.
+在没有 WAL 的情况下正常关闭之后，引擎不应留下非空的内存表。重新打开时应回放清单（manifest），只打开被引用的 SST，在元数据可用之后恢复分层（leveled）顺序，并分配一个大于所有已恢复文件 ID 的 ID。
 
-Write down the durable events for one flush and one compaction. Insert a hypothetical crash after each event and determine whether recovery sees the old state or the new state. Both outcomes can be valid at some boundaries; a manifest state that references a missing file is not.
+写下一次落盘和一次压缩的持久化事件。在每个事件之后插入一个假设的崩溃，判断恢复看到的是旧状态还是新状态。在某些边界上两种结果都可能合法；但一份引用了缺失文件的清单（manifest）状态不合法。
 
-## Test Your Understanding
+## 检验你的理解
 
-### Recovery and Durability
+### 恢复与持久性
 
-* When do you need to call `fsync`? Why do you need to fsync the directory?
-* What are the places you will need to write to the manifest?
-* Why must newly created SSTs and their directory entries be synced before the manifest record that references them?
-* Why is it safe for an obsolete SST to remain on disk after the compaction record is durable? Is it safe to delete the SST before that point?
-* During recovery, why can leveled compaction results not be sorted by first key while manifest records are being replayed?
-* Construct a record sequence containing flushes and compactions, replay it by hand, and compute the next unused SST ID.
+* 什么时候需要调用 `fsync`？为什么需要 fsync 目录？
+* 有哪些地方需要写入清单（manifest）？
+* 为什么新建的 SST 及其目录项必须在引用它们的清单（manifest）记录之前同步？
+* 为什么在压缩记录持久化之后，让过期 SST 留在磁盘上是安全的？在该记录之前删除 SST 安全吗？
+* 恢复期间，为什么在回放清单（manifest）记录时无法按第一个键对分层（leveled）压缩的结果排序？
+* 构造一个包含落盘和压缩的记录序列，手工回放它，并计算下一个未使用的 SST ID。
 
-### Alternative Designs
+### 替代设计
 
-* Consider an alternative implementation of an LSM engine that does not use a manifest file. Instead, it records the level/tier information in the header of each file, scans the storage directory every time it restarts, and recover the LSM state solely from the files present in the directory. Is it possible to correctly maintain the LSM state in this implementation and what might be the problems/challenges with that?
-* Currently, we create all SST/concat iterators before creating the merge iterator, which means that we have to load the first block of the first SST in all levels into memory before starting the scanning process. We have start/end key in the manifest, and is it possible to leverage this information to delay the loading of the data blocks and make the time to return the first key-value pair faster?
-* Is it possible not to store the tier/level information in the manifest? i.e., we only store the list of SSTs we have in the manifest without the level information, and rebuild the tier/level using the key range and timestamp information (SST metadata).
+* 考虑一种不使用清单（manifest）文件的 LSM 引擎替代实现。它把层（level）/层（tier）信息记录在每个文件的头部，每次重启时扫描存储目录，仅根据目录中存在的文件恢复 LSM 状态。这种实现能否正确维护 LSM 状态，可能遇到什么问题或挑战？
+* 目前我们在创建归并迭代器之前就创建了所有 SST/concat 迭代器，这意味着在开始扫描之前，必须把每个层中第一个 SST 的第一个块加载进内存。清单（manifest）中有起止键，能否利用这些信息推迟数据块的加载，让返回第一个键值对的时间更短？
+* 是否可以不把层（tier）/层（level）信息存进清单（manifest）？也就是说，清单（manifest）只存我们拥有的 SST 列表而不含层信息，再用键范围和（SST 元数据中的）时间戳信息重建层（tier）/层（level）。
 
-Use the [Week 2 end-of-week self-check](./week2-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your filesystem model and recovery assumptions before comparing tradeoffs.
+用[第二周周末自检](./week2-overview.md#end-of-week-self-check)校验核心不变量。其余设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的文件系统模型和恢复假设。
 
-## Bonus Tasks
+## 附加任务
 
-* **Manifest Compaction.** When the number of logs in the manifest file gets too large, you can rewrite the manifest file to only store the current snapshot and append new logs to that file.
-* **Parallel Open.** After you collect the list of SSTs to open, you can open and decode them in parallel, instead of doing it one by one, therefore accelerating the recovery process.
+* **清单压缩。** 当清单（manifest）文件中的日志过多时，你可以重写清单（manifest）文件，只保存当前快照，再把新日志追加到该文件。
+* **并行打开。** 收集到要打开的 SST 列表之后，你可以并行地打开并解码它们，而不是逐个处理，从而加快恢复过程。
 
 {{#include copyright.md}}

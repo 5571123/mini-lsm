@@ -76,7 +76,7 @@ fn test_integration(compaction_options: CompactionOptions) {
             .unwrap();
     }
     storage.close().unwrap();
-    // ensure some SSTs are not flushed
+    // 确保部分 SSTable 尚未落盘
     assert!(
         !storage.inner.state.read().memtable.is_empty()
             || !storage.inner.state.read().imm_memtables.is_empty()

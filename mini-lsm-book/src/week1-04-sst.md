@@ -2,51 +2,51 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Sorted String Table (SST)
+# Sorted String Table（SST）
 
-![Chapter Overview](./lsm-tutorial/week1-04-overview.svg)
+![本章概览](./lsm-tutorial/week1-04-overview.svg)
 
-By the end of this chapter, you will be able to:
+学完本章，你将能够：
 
-* Implement SST encoding and metadata encoding.
-* Implement SST decoding and an SST iterator.
-* Explain how block metadata, lazy loading, and caching support lower-bound seeks without loading an entire SST.
+* 实现 SSTable 的编码和元数据编码。
+* 实现 SSTable 的解码和 SSTable 迭代器。
+* 解释块元数据、惰性加载和缓存如何支持下界定位，而不需要加载整个 SSTable。
   
-To copy the test cases into the starter code and run them:
+把测试用例复制到起始代码并运行：
 
 ```
 cargo x copy-test --week 1 --day 4
 cargo x scheck
 ```
 
-## Before You Begin
+## 开始之前
 
-A block provides sorted storage and seeks within a small byte range. An SST composes many blocks into an immutable file and adds enough metadata to locate the block that may contain a requested key.
+块在小段字节范围内提供有序存储和定位能力。SSTable 把许多块组合成一个不可变文件，并添加足够的元数据来定位可能包含所请求键的块。
 
-The main invariants are:
+主要不变量是：
 
-1. Blocks and their metadata appear in the same key order.
-2. Each `BlockMeta` records the encoded block's offset and its actual first and last keys.
-3. An iterator directly retains only the block it currently needs and advances to the next block when a seek lands beyond the current one. The cache may retain other blocks independently.
-4. A lower-bound seek never skips a key greater than or equal to the target.
-5. The block cache identifies a block by both its SST ID and block index; blocks from different SSTs must never collide.
+1. 块及其元数据按相同的键顺序排列。
+2. 每个 `BlockMeta` 记录编码后块的偏移，以及它实际的首键和末键。
+3. 迭代器只直接保留当前需要的那个块，当定位越过当前块时前进到下一个块。缓存可以独立保留其他块。
+4. 下界定位永远不会跳过大于或等于目标的键。
+5. 块缓存用 SSTable ID 和块下标共同标识一个块；来自不同 SSTable 的块绝不能冲突。
 
-> **Predict before coding:** An SST contains block 1 with `[a, b, c]` and block 2 with `[e, f, g]`. If block selection uses only first-key metadata, which block is initially selected by `seek(d)`? What must the iterator do next to satisfy lower-bound seek semantics?
+> **写代码前先预测：** 一个 SSTable 包含块 1 `[a, b, c]` 和块 2 `[e, f, g]`。如果选择块时只用首键元数据，`seek(d)` 最初会选中哪个块？为满足下界定位语义，迭代器接下来必须做什么？
 
-## Task 1: SST Builder
+## 任务 1：SSTable 构建器
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/table/builder.rs
 src/table.rs
 ```
 
-SSTs consist of data blocks and index information stored on disk. Data blocks are usually loaded lazily: they remain on disk until a read requires them. Index blocks can also be loaded on demand, but this course assumes that the metadata for every SST fits in memory; we do not implement separate index blocks. An SST file is commonly around 256 MB.
+SSTable 由数据块和存放在磁盘上的索引信息组成。数据块通常惰性加载：在读取需要之前，它们一直留在磁盘上。索引块也可以按需加载，但本课程假设每个 SSTable 的元数据都能放进内存；我们不实现独立的索引块。一个 SSTable 文件通常在 256 MB 左右。
 
-The SST builder resembles the block builder: callers add entries through `add`. Maintain a `BlockBuilder` within `SsTableBuilder` and finish the current block when necessary. You must also maintain `BlockMeta` for each block, including its offset and its first and last keys. The `build` function encodes the SST, writes it to disk with `FileObject::create`, and returns an `SsTable`.
+SSTable 构建器与块构建器类似：调用方通过 `add` 添加条目。在 `SsTableBuilder` 内维护一个 `BlockBuilder`，并在需要时结束当前块。你还必须为每个块维护 `BlockMeta`，包括它的偏移以及首键和末键。`build` 函数编码 SSTable，用 `FileObject::create` 写入磁盘，并返回 `SsTable`。
 
-The SST encoding has the following layout:
+SSTable 的编码布局如下：
 
 ```plaintext
 -------------------------------------------------------------------------------------------
@@ -56,24 +56,24 @@ The SST encoding has the following layout:
 -------------------------------------------------------------------------------------------
 ```
 
-Implement `SsTableBuilder::estimated_size` so that callers can decide when to begin a new SST. The estimate does not need to be exact. Because the data blocks are much larger than the metadata, returning the size of the encoded data blocks is sufficient.
+实现 `SsTableBuilder::estimated_size`，让调用方可以决定何时开始新的 SSTable。估算不必精确。由于数据块远大于元数据，返回编码后数据块的大小就足够了。
 
-You must also implement block-metadata encoding and decoding so that `SsTableBuilder::build` can produce a valid SST file.
+你还必须实现块元数据的编码和解码，使 `SsTableBuilder::build` 能生成有效的 SSTable 文件。
 
-## Task 2: SST Iterator
+## 任务 2：SSTable 迭代器
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/table/iterator.rs
 src/table.rs
 ```
 
-As with `BlockIterator`, implement an iterator over an SST. Load data blocks on demand: while the iterator is in block 1, for example, it should not retain any other block's contents.
+与 `BlockIterator` 类似，实现对 SSTable 的迭代。按需加载数据块：例如迭代器位于块 1 时，它不应保留其他块的内容。
 
-`SsTableIterator` should implement the `StorageIterator` trait, so that it can be composed with other iterators in the future.
+`SsTableIterator` 应实现 `StorageIterator` trait，以便将来与其他迭代器组合。
 
-Pay particular attention to `seek_to_key`. Use a binary search over block metadata to find the block that may contain the requested key. Because the key might not exist, the block iterator may become invalid immediately after the seek. For example:
+请特别注意 `seek_to_key`。对块元数据做二分查找，找出可能包含所请求键的块。由于该键可能不存在，块迭代器在定位后可能立即失效。例如：
 
 ```plaintext
 --------------------------------------
@@ -83,59 +83,59 @@ Pay particular attention to `seek_to_key`. Use a binary search over block metada
 --------------------------------------
 ```
 
-To keep the implementation simple, we recommend using only the first key of each block in the binary search. For `seek(b)`, the search shows that block 1 covers the candidate range `a <= key < e`. Load block 1 and seek its iterator to the appropriate position.
+为使实现简单，我们建议二分查找时只使用每个块的首键。对于 `seek(b)`，查找结果表明块 1 覆盖候选范围 `a <= key < e`。加载块 1，并把它的迭代器定位到合适的位置。
 
-For `seek(d)`, however, searching only the first keys also selects block 1, and seeking within that block reaches its end. After a seek, check whether the iterator is invalid and advance to the next block if necessary. Alternatively, use the last-key metadata to select the correct block directly.
+但对于 `seek(d)`，只用首键查找同样会选中块 1，而在该块内定位会走到它的末尾。定位之后，请检查迭代器是否失效，必要时前进到下一个块。另一种做法是使用末键元数据直接选中正确的块。
 
-## Task 3: Block Cache
+## 任务 3：块缓存
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/table/iterator.rs
 src/table.rs
 ```
 
-Implement a new `read_block_cached` function on `SsTable`.
+在 `SsTable` 上实现新的 `read_block_cached` 函数。
 
-We use [`moka-rs`](https://docs.rs/moka/latest/moka/) for the block cache, with `(sst_id, block_id)` as the cache key. Use `try_get_with` to return a cached block on a hit or load and cache it on a miss. If concurrent requests miss on the same block, `try_get_with` performs one disk read and shares the result among the requests.
+我们使用 [`moka-rs`](https://docs.rs/moka/latest/moka/) 作为块缓存，缓存键为 `(sst_id, block_id)`。用 `try_get_with` 在命中时返回缓存中的块，在未命中时加载并缓存它。如果多个并发请求同时未命中同一个块，`try_get_with` 只执行一次磁盘读取，并把结果共享给这些请求。
 
-Update the table iterator to call `read_block_cached` instead of `read_block`.
+更新表迭代器，改为调用 `read_block_cached` 而不是 `read_block`。
 
-## Chapter Checkpoint
+## 本章检查点
 
-You should now be able to build and reopen a multi-block SST, seek across block boundaries, and iterate without keeping every data block in memory. Run seeks for the first and last key of each block, for a key between two blocks, and for a key greater than the SST's last key.
+你现在应能构建并重新打开一个多块 SSTable，跨块边界定位，并在不把每个数据块都留在内存的前提下迭代。请对每个块的首键和末键、两个块之间的键，以及大于 SSTable 末键的键分别执行定位。
 
-Inspect the block-reading path after the tests pass. Explain when a disk read occurs, what remains resident because of the iterator, and what remains reachable through the cache. These lifetimes are related but not identical.
+测试通过后，检查读取块的路径。解释磁盘读取在何时发生、哪些内容因迭代器而驻留、哪些内容通过缓存仍然可达。这几个生命周期彼此相关，但并不相同。
 
-## Test Your Understanding
+## 检验你的理解
 
-### Correctness and Format
+### 正确性与格式
 
-* What is the time complexity of seeking a key in the SST?
-* Where does the cursor stop when you seek a non-existent key in your implementation?
-* Is it possible (or necessary) to do in-place updates of SST files?
+* 在 SSTable 中定位一个键的时间复杂度是多少？
+* 在你的实现中，定位一个不存在的键时游标停在哪里？
+* 是否可能（或有必要）对 SSTable 文件做原地更新？
 
-### Caching and Memory
+### 缓存与内存
 
-* An SST is usually large—for example, 256 MB—so repeatedly copying or growing its `Vec` can be expensive. Does your implementation reserve enough space for the SST builder in advance? How?
-* Looking at the `moka` block cache, why does it return `Arc<Error>` instead of the original `Error`?
-* Does using a block cache guarantee that at most a fixed number of blocks exist in memory? For example, with a 4 GB `moka` cache and 4 KiB blocks, can more than `4 GB / 4 KiB` blocks be alive at once? Account for references held outside the cache.
+* 一个 SSTable 通常很大——例如 256 MB——因此反复复制或增长它的 `Vec` 开销很大。你的实现是否提前为 SSTable 构建器预留了足够空间？如何预留？
+* 观察 `moka` 块缓存，它为什么返回 `Arc<Error>` 而不是原始的 `Error`？
+* 使用块缓存是否能保证内存中最多存在固定数量的块？例如，`moka` 缓存为 4 GB、块为 4 KiB 时，同时存活的块能否超过 `4 GB / 4 KiB` 个？请把缓存之外持有的引用也考虑进去。
 
-### Storage Design
+### 存储设计
 
-* Can an LSM engine store columnar data, such as a table with 100 integer columns? Would the current SST format still be a good choice?
-* Suppose the LSM engine uses an object-storage service such as S3. How would you adapt the SST format, its parameters, and the block cache to suit that environment?
-* For now, we load the metadata for every SST into memory. If 16 GB is reserved for this metadata, estimate the maximum database size under explicit assumptions for average key length, block size, metadata bytes per block, and SST utilization. Which assumption dominates? This limitation motivates an index cache.
+* LSM 引擎能存储列式数据吗，例如一张有 100 个整数列的表？当前的 SSTable 格式仍然是好选择吗？
+* 假设 LSM 引擎使用 S3 这类对象存储服务。你会如何调整 SSTable 格式、它的参数和块缓存来适应这种环境？
+* 目前我们把每个 SSTable 的元数据都加载到内存中。如果为这些元数据预留 16 GB，请在对平均键长度、块大小、每块元数据字节数和 SSTable 利用率给出明确假设的前提下，估算数据库的最大规模。哪个假设起主导作用？这一限制促使我们引入索引缓存。
 
-Use the [Week 1 end-of-week self-check](./week1-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs. You can also discuss them in the Discord community.
+用[第一周周末自检](./week1-overview.md#end-of-week-self-check)校验核心不变量。其余设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载和假设。你也可以在 Discord 社区讨论。
 
-## Bonus Tasks
+## 附加任务
 
-* **Explore Different SST Encodings and Layouts.** For example, the authors of [Lethe: Enabling Efficient Deletes in LSMs](https://disc-projects.bu.edu/lethe/) add secondary-key support to SSTs.
-  * Alternatively, use a B+ tree rather than sorted blocks as the SST format.
-* **Index Blocks.** Split block indexes and block metadata into index blocks, and load them on-demand.
-* **Index Cache.** Use a separate cache for indexes apart from the data block cache.
-* **I/O Optimizations.** Align blocks to 4 KiB boundaries and use direct I/O to bypass the system page cache.
+* **探索不同的 SSTable 编码与布局。** 例如，[Lethe: Enabling Efficient Deletes in LSMs](https://disc-projects.bu.edu/lethe/) 的作者为 SSTable 增加了二级键支持。
+  * 或者，用 B+ 树而不是有序块作为 SSTable 格式。
+* **索引块。** 把块索引和块元数据拆分成索引块，并按需加载。
+* **索引缓存。** 为索引使用独立于数据块缓存的另一个缓存。
+* **I/O 优化。** 把块对齐到 4 KiB 边界，并使用直接 I/O 绕过系统页缓存。
 
 {{#include copyright.md}}

@@ -16,8 +16,8 @@ use anyhow::Result;
 
 use super::StorageIterator;
 
-/// Merges two iterators of different types into one. If the two iterators have the same key, only
-/// produce the key once and prefer the entry from A.
+/// 把两个不同类型的迭代器归并成一个。如果两个迭代器有相同的键，只
+/// 产出一次该键，并优先取 A 中的条目。
 pub struct TwoMergeIterator<A: StorageIterator, B: StorageIterator> {
     a: A,
     b: B,

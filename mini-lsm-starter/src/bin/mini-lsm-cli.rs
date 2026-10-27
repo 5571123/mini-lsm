@@ -251,7 +251,7 @@ impl Repl {
         loop {
             let readline = self.editor.readline(&self.prompt)?;
             if readline.trim().is_empty() {
-                // Skip noop
+                // 跳过空操作
                 continue;
             }
             let command = Command::parse(&readline)?;

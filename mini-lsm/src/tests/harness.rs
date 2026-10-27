@@ -1,4 +1,4 @@
-#![allow(dead_code)] // REMOVE THIS LINE once all modules are complete
+#![allow(dead_code)] // 所有模块完成后删除这一行
 
 // Copyright (c) 2022-2025 Alex Chi Z
 //
@@ -17,7 +17,6 @@
 use std::{
     collections::BTreeMap,
     ops::Bound,
-    os::unix::fs::MetadataExt,
     path::Path,
     sync::Arc,
     time::{Duration, Instant},
@@ -247,7 +246,7 @@ pub fn compaction_bench(storage: Arc<MiniLsm>) {
     for iter in 0..10 {
         let range_begin = iter * 5000;
         for i in range_begin..(range_begin + overlaps) {
-            // 120B per key, 4MB data populated
+            // 每个键 120B，共写入 4MB 数据
             let key: String = gen_key(i);
             let version = key_map.get(&i).copied().unwrap_or_default() + 1;
             let value = gen_value(version);
@@ -257,7 +256,7 @@ pub fn compaction_bench(storage: Arc<MiniLsm>) {
         }
     }
 
-    std::thread::sleep(Duration::from_secs(1)); // wait until all memtables flush
+    std::thread::sleep(Duration::from_secs(1)); // 等待所有内存表落盘
     while {
         let snapshot = storage.inner.state.read();
         !snapshot.imm_memtables.is_empty()
@@ -326,7 +325,7 @@ pub fn check_compaction_ratio(storage: Arc<MiniLsm>) {
         level_size.push(size);
     }
     let extra_iterators = if TS_ENABLED {
-        1 /* txn local iterator for OCC */
+        1 /* OCC 使用的事务本地迭代器 */
     } else {
         0
     };
@@ -379,7 +378,7 @@ pub fn check_compaction_ratio(storage: Arc<MiniLsm>) {
                 multiplier *= level_size_multiplier as f64;
                 let this_size = level_size[idx - 1];
                 assert!(
-                    // do not add hard requirement on level size multiplier considering bloom filters...
+                    // 考虑到布隆过滤器，不对层大小倍数做硬性要求……
                     this_size as f64 / last_level_size as f64 <= 1.0 / multiplier + 0.5,
                     "L{}/L_max, {}/{}>>1.0/{}",
                     state.levels[idx - 1].0,
@@ -446,7 +445,8 @@ pub fn dump_files_in_dir(path: impl AsRef<Path>) {
         print!("{}", f.path().display());
         println!(
             ", size={:.3}KB",
-            f.metadata().unwrap().size() as f64 / 1024.0
+            // 用跨平台的 `Metadata::len()` 取字节数（Unix 的 `MetadataExt::size()` 语义相同）。
+            f.metadata().unwrap().len() as f64 / 1024.0
         );
     }
 }

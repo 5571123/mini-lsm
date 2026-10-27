@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
+#![allow(unused_variables)] // TODO(you): 实现该模块后删除此 lint
+#![allow(dead_code)] // TODO(you): 实现该模块后删除此 lint
 
 use std::cmp::{self};
 use std::collections::BinaryHeap;
@@ -50,8 +50,8 @@ impl<I: StorageIterator> Ord for HeapWrapper<I> {
     }
 }
 
-/// Merge multiple iterators of the same type. If the same key occurs multiple times in some
-/// iterators, prefer the one with smaller index.
+/// 归并多个同类型的迭代器。如果同一个键在多个迭代器中重复出现，
+/// 优先保留下标较小的那个。
 pub struct MergeIterator<I: StorageIterator> {
     iters: BinaryHeap<HeapWrapper<I>>,
     current: Option<HeapWrapper<I>>,

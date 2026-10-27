@@ -35,15 +35,15 @@ use rand::{Rng, RngExt, SeedableRng};
 #[command(author, version, about, long_about = None)]
 enum Args {
     Simple {
-        /// Dump the generated ID instead of where the original data comes from.
-        /// For example, if SST 1, 2, 3 is compacted to another level, it should have
-        /// a new SST ID 4, 5, 6 as SSTs are immutable and write-once. With this flag
-        /// enabled, you will see the new level has SST 1, 2, 3 because the data of
-        /// 4, 5, 6 are originated from 1, 2, 3.
+        /// 打印生成的 ID，而不是数据最初的来源。
+        /// 例如 SST 1、2、3 被压缩到另一层时，因为 SSTable 不可变且只写一次，
+        /// 新层本该得到新的 SST ID 4、5、6。打开该开关后，
+        /// 你会看到新层里仍是 SST 1、2、3，因为 4、5、6 的数据
+        /// 来源于 1、2、3。
         #[clap(long)]
         dump_real_id: bool,
-        /// Only dump size information instead of the layer files. if this is enabled,
-        /// it will print one row per compaction iteration.
+        /// 只打印大小信息，不打印各层的文件。打开该开关后，
+        /// 每次压缩迭代只打印一行。
         #[clap(long)]
         size_only: bool,
         #[clap(long, default_value = "2")]
@@ -56,15 +56,15 @@ enum Args {
         iterations: usize,
     },
     Tiered {
-        /// Dump the generated ID instead of where the original data comes from.
-        /// For example, if SST 1, 2, 3 is compacted to another level, it should have
-        /// a new SST ID 4, 5, 6 as SSTs are immutable and write-once. With this flag
-        /// enabled, you will see the new level has SST 1, 2, 3 because the data of
-        /// 4, 5, 6 are originated from 1, 2, 3.
+        /// 打印生成的 ID，而不是数据最初的来源。
+        /// 例如 SST 1、2、3 被压缩到另一层时，因为 SSTable 不可变且只写一次，
+        /// 新层本该得到新的 SST ID 4、5、6。打开该开关后，
+        /// 你会看到新层里仍是 SST 1、2、3，因为 4、5、6 的数据
+        /// 来源于 1、2、3。
         #[clap(long)]
         dump_real_id: bool,
-        /// Only dump size information instead of the layer files. if this is enabled,
-        /// it will print one row per compaction iteration.
+        /// 只打印大小信息，不打印各层的文件。打开该开关后，
+        /// 每次压缩迭代只打印一行。
         #[clap(long)]
         size_only: bool,
         #[clap(long, default_value = "8")]
@@ -81,15 +81,15 @@ enum Args {
         iterations: usize,
     },
     Leveled {
-        /// Dump the generated ID instead of where the original data comes from.
-        /// For example, if SST 1, 2, 3 is compacted to another level, it should have
-        /// a new SST ID 4, 5, 6 as SSTs are immutable and write-once. With this flag
-        /// enabled, you will see the new level has SST 1, 2, 3 because the data of
-        /// 4, 5, 6 are originated from 1, 2, 3.
+        /// 打印生成的 ID，而不是数据最初的来源。
+        /// 例如 SST 1、2、3 被压缩到另一层时，因为 SSTable 不可变且只写一次，
+        /// 新层本该得到新的 SST ID 4、5、6。打开该开关后，
+        /// 你会看到新层里仍是 SST 1、2、3，因为 4、5、6 的数据
+        /// 来源于 1、2、3。
         #[clap(long)]
         dump_real_id: bool,
-        /// Only dump size information instead of the layer files. if this is enabled,
-        /// it will print one row per compaction iteration.
+        /// 只打印大小信息，不打印各层的文件。打开该开关后，
+        /// 每次压缩迭代只打印一行。
         #[clap(long)]
         size_only: bool,
         #[clap(long, default_value = "2")]
@@ -104,8 +104,8 @@ enum Args {
         iterations: usize,
         #[clap(long, default_value = "32")]
         sst_size_mb: usize,
-        /// Seed for the mock SST key ranges. Use the same seed when comparing
-        /// learner and reference output.
+        /// 模拟 SST 键范围所用的随机种子。比较学生实现与参考实现的输出时，
+        /// 请使用相同的种子。
         #[clap(long, default_value = "42")]
         seed: u64,
     },
@@ -114,7 +114,7 @@ enum Args {
 pub struct MockStorage {
     snapshot: LsmStorageState,
     next_sst_id: usize,
-    /// Maps SST ID to the original flushed SST ID
+    /// 把 SST ID 映射到它最初落盘时的 SST ID
     file_list: HashMap<usize, usize>,
     total_flushes: usize,
     total_writes: usize,
@@ -292,7 +292,7 @@ fn main() {
             level0_file_num_compaction_trigger,
             max_levels,
         } => {
-            // TODO(chi): use unified logic for all 3 compactions...
+            // TODO(chi): 为这 3 种压缩统一逻辑……
             let controller =
                 SimpleLeveledCompactionController::new(SimpleLeveledCompactionOptions {
                     size_ratio_percent,

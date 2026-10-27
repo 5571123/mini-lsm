@@ -27,7 +27,7 @@ pub struct SimpleLeveledCompactionOptions {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SimpleLeveledCompactionTask {
-    // if upper_level is `None`, then it is L0 compaction
+    // 如果 upper_level 是 `None`，那么这是 L0 压缩
     pub upper_level: Option<usize>,
     pub upper_level_sst_ids: Vec<usize>,
     pub lower_level: usize,
@@ -44,9 +44,9 @@ impl SimpleLeveledCompactionController {
         Self { options }
     }
 
-    /// Generates a compaction task.
+    /// 生成一个压缩任务。
     ///
-    /// Returns `None` if no compaction needs to be scheduled. The order of SSTs in the compaction task id vector matters.
+    /// 如果不需要调度压缩则返回 `None`。压缩任务中 SST id 向量的顺序很重要。
     pub fn generate_compaction_task(
         &self,
         snapshot: &LsmStorageState,
@@ -61,7 +61,7 @@ impl SimpleLeveledCompactionController {
             level_sizes.push(files.len());
         }
 
-        // check level0_file_num_compaction_trigger for compaction of L0 to L1
+        // 检查 level0_file_num_compaction_trigger，判断是否要做 L0 到 L1 的压缩
         if snapshot.l0_sstables.len() >= self.options.level0_file_num_compaction_trigger {
             println!(
                 "compaction triggered at level 0 because L0 has {} SSTs >= {}",
@@ -77,7 +77,7 @@ impl SimpleLeveledCompactionController {
             });
         }
 
-        // check size_ratio_percent for compaction of other levels (>= L1)
+        // 对其他层（>= L1）检查 size_ratio_percent
         for i in 1..self.options.max_levels {
             let lower_level = i + 1;
             let size_ratio = level_sizes[lower_level] as f64 / level_sizes[i] as f64;
@@ -98,13 +98,12 @@ impl SimpleLeveledCompactionController {
         None
     }
 
-    /// Apply the compaction result.
+    /// 应用压缩结果。
     ///
-    /// The compactor will call this function with the compaction task and the list of SST ids generated. This function applies the
-    /// result and generates a new LSM state. The functions should only change `l0_sstables` and `levels` without changing memtables
-    /// and `sstables` hash map. Though there should only be one thread running compaction jobs, you should think about the case
-    /// where an L0 SST gets flushed while the compactor generates new SSTs, and with that in mind, you should do some sanity checks
-    /// in your implementation.
+    /// 压缩器会带着压缩任务和新生成的 SST id 列表调用该函数。该函数应用结果并生成新的 LSM 状态。
+    /// 函数只应修改 `l0_sstables` 和 `levels`，不应改动内存表和 `sstables` 哈希表。虽然
+    /// 运行压缩任务的只有一个线程，但你应考虑压缩器生成新 SST 期间某个 L0 SST 被落盘的情况，
+    /// 并在实现中据此做些一致性检查。
     pub fn apply_compaction_result(
         &self,
         snapshot: &LsmStorageState,

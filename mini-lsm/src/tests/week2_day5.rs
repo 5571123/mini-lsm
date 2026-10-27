@@ -56,11 +56,11 @@ fn test_integration_simple() {
     }));
 }
 
-/// Provision the storage such that base_level contains 2 SST files (target size is 2MB and each SST is 1MB).
-/// This configuration has the effect that compaction will generate a new lower-level containing more than 1 SST files,
-/// and leveled compaction should handle this situation correctly: These files might not be sorted by first-key and
-/// should NOT be sorted inside the `apply_compaction_result` function, because we don't have any actual SST loaded at the
-/// point where this function is called during manifest recovery.
+/// 构造这样的存储状态：base_level 含 2 个 SSTable（目标大小 2MB，每个 SSTable 为 1MB）。
+/// 该配置的效果是：压缩会生成一个含多个 SSTable 的新下层，
+/// 而 leveled 压缩应正确处理这种情况：这些文件可能未按首键排序，
+/// 也不应在 `apply_compaction_result` 函数内部排序，因为在清单恢复期间调用该函数时，
+/// 我们还没有加载任何实际的 SSTable。
 #[test]
 fn test_multiple_compacted_ssts_leveled() {
     let compaction_options = CompactionOptions::Leveled(LeveledCompactionOptions {
@@ -75,8 +75,8 @@ fn test_multiple_compacted_ssts_leveled() {
     let dir = tempdir().unwrap();
     let storage = MiniLsm::open(&dir, lsm_storage_options).unwrap();
 
-    // Insert approximately 10MB of data to ensure that at least one compaction is triggered by priority.
-    // Insert 500 key-value pairs where each pair is 2KB
+    // 写入约 10MB 数据，确保至少触发一次按优先级调度的压缩。
+    // 插入 500 个键值对，每对 2KB
     for i in 0..500 {
         let (key, val) = key_value_pair_with_target_size(i, 20 * 1024);
         storage.put(&key, &val).unwrap();
@@ -139,7 +139,7 @@ fn test_integration(compaction_options: CompactionOptions) {
             .unwrap();
     }
     storage.close().unwrap();
-    // ensure all SSTs are flushed
+    // 确保所有 SSTable 都已落盘
     assert!(storage.inner.state.read().memtable.is_empty());
     assert!(storage.inner.state.read().imm_memtables.is_empty());
     storage.dump_structure();
@@ -156,7 +156,7 @@ fn test_integration(compaction_options: CompactionOptions) {
     assert_eq!(storage.get(b"2").unwrap(), None);
 }
 
-/// Create a key value pair where key and value are of target size in bytes
+/// 创建键和值均为目标字节大小的键值对
 fn key_value_pair_with_target_size(seed: i32, target_size_byte: usize) -> (Vec<u8>, Vec<u8>) {
     let mut key = vec![0; target_size_byte - 4];
     key.put_i32(seed);

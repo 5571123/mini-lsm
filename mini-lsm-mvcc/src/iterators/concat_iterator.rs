@@ -23,8 +23,8 @@ use crate::{
 
 use super::StorageIterator;
 
-/// Concat multiple iterators ordered in key order and their key ranges do not overlap. We do not want to create the
-/// iterators when initializing this iterator to reduce the overhead of seeking.
+/// 把多个按键序排列、且键范围互不重叠的迭代器拼接起来。初始化该迭代器时
+/// 不去创建这些迭代器，以减少定位的开销。
 pub struct SstConcatIterator {
     current: Option<SsTableIterator>,
     next_sst_idx: usize,

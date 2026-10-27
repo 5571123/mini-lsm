@@ -2,18 +2,18 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Simple Compaction Strategy
+# 简单分层压缩策略
 
-![Chapter Overview](./lsm-tutorial/week2-02-simple.svg)
+![本章概览](./lsm-tutorial/week2-02-simple.svg)
 
-By the end of this chapter, you will be able to:
+学完本章，你将能够：
 
-* Implement a simple leveled compaction strategy and simulate it on the compaction simulator.
-* Run compaction as a background task and install its results safely.
-* Extend point reads and scans across multiple non-overlapping levels.
-* Explain how level ratios, merge priority, and bottom-level tombstone removal affect correctness and amplification.
+* 实现简单的分层（leveled）压缩策略，并在压缩模拟器上模拟它。
+* 把压缩作为后台任务运行，并安全地安装其结果。
+* 把点查和扫描扩展到多个互不重叠的层。
+* 解释层比例、合并优先级和底层墓碑（tombstone）清除如何影响正确性与放大。
 
-To copy the test cases into the starter code and run them:
+把测试用例复制到起始代码并运行：
 
 ```
 cargo x copy-test --week 2 --day 2
@@ -22,41 +22,41 @@ cargo x scheck
 
 <div class="warning">
 
-Read the [Week 2 overview](./week2-overview.md) before beginning this chapter for an introduction to compaction and amplification.
+开始本章之前，请先读[第二周概览](./week2-overview.md)，了解压缩与放大的背景。
 
 </div>
 
-## Before You Begin
+## 开始之前
 
-Day 1 compacted the entire database into L1 on demand. Simple leveled compaction introduces a controller that chooses one adjacent pair of levels at a time and a background thread that repeatedly asks the controller for work.
+第一天按需把整个数据库压缩进 L1。简单分层压缩引入一个控制器，每次选择一对相邻的层；还引入一个后台线程，反复向控制器请求任务。
 
-Keep these invariants in mind:
+请记住这些不变量：
 
-1. L0 is ordered from newest to oldest and may overlap. Each level from L1 downward is one sorted, non-overlapping run.
-2. In a merge, the upper level contains newer versions than the lower level and must win on duplicate keys. For L0, individual files also need newest-to-oldest priority.
-3. `generate_compaction_task` must eventually return `None`; otherwise, the simulator and background worker cannot converge.
-4. Applying an L0 task removes exactly the captured L0 files, not files flushed after the task was generated.
-5. Tombstones are preserved until the task's lower level is the bottom-most level.
+1. L0 从新到旧排列，且可以重叠。从 L1 往下，每一层是一个有序、范围互不重叠的有序段。
+2. 在合并中，上层包含比下层更新的版本，遇到重复键时必须胜出。对 L0 而言，各个文件之间也需要从新到旧的优先级。
+3. `generate_compaction_task` 最终必须返回 `None`；否则模拟器和后台工作线程都无法收敛。
+4. 应用 L0 任务时只移除被选取的 L0 文件，不移除任务生成之后才落盘的文件。
+5. 墓碑（tombstone）一直保留，直到任务的下层是最底层。
 
-> **Predict before coding:** With `size_ratio_percent = 200`, suppose L1 has two files, L2 has three, and L3 has eight. Which adjacent pair should be compacted next? If a new L0 file is flushed while that task runs, should applying the result change L0?
+> **写代码前先预测：** 设 `size_ratio_percent = 200`，假设 L1 有两个文件、L2 有三个、L3 有八个。接下来应压缩哪一对相邻层？如果该任务运行期间落盘了一个新的 L0 文件，应用结果时是否应改动 L0？
 
-## Task 1: Simple Leveled Compaction
+## 任务 1：简单分层压缩
 
-In this task, implement the first scheduling policy: simple leveled compaction. You will need to modify:
+本任务实现第一种调度策略：简单分层压缩。你需要修改：
 
 ```
 src/compact/simple_leveled.rs
 ```
 
-Simple leveled compaction is similar to the strategy in the original LSM-tree paper. It maintains a fixed number of levels. When a level at or below L1 is too large relative to the next level, the engine merges all of its SSTs with that lower level. Three parameters in `SimpleLeveledCompactionOptions` control the policy.
+简单分层压缩与最初 LSM-tree 论文中的策略相似。它维护固定数量的层。当 L1 或更靠下某一层的数据量相对下一层过大时，引擎把该层的所有 SST 与下一层合并。`SimpleLeveledCompactionOptions` 中有三个参数控制该策略。
 
-* `size_ratio_percent`: the target ratio of lower-level files to upper-level files. A production system would compare byte sizes, but this exercise compares file counts for simpler simulation. Trigger compaction when the actual ratio falls below this value.
-* `level0_file_num_compaction_trigger`: when L0 contains at least this many SSTs, compact L0 with L1.
-* `max_levels`: the number of levels (excluding L0) in the LSM tree.
+* `size_ratio_percent`：下层文件数与上层文件数的目标比例。生产系统会比较字节大小，但本练习为了简化模拟而比较文件数。当实际比例低于该值时触发压缩。
+* `level0_file_num_compaction_trigger`：当 L0 至少包含这么多个 SST 时，把 L0 与 L1 压缩。
+* `max_levels`：LSM 树中的层数（不含 L0）。
 
-Consider `size_ratio_percent = 200`, `max_levels = 3`, and `level0_file_num_compaction_trigger = 2`. Each lower level should contain at least twice as many files as the level above it.
+考虑 `size_ratio_percent = 200`、`max_levels = 3` 和 `level0_file_num_compaction_trigger = 2`。每个下层至少应包含其上一层两倍的文件数。
 
-Assume the engine flushes two L0 SSTs. This reaches the `level0_file_num_compaction_trigger`, and your controller should trigger an L0->L1 compaction.
+假设引擎落盘了两个 L0 SST。这达到了 `level0_file_num_compaction_trigger`，你的控制器应触发一次 L0 到 L1 的压缩。
 
 ```
 --- After Flush ---
@@ -71,7 +71,7 @@ L2 (0): []
 L3 (0): []
 ```
 
-L2 is empty while L1 has two files, so `(L2 / L1) * 100 = (0 / 2) * 100 = 0`, which is below 200. The controller compacts L1 with L2. The same condition then holds between L2 and L3, so a second compaction moves the two files to the bottom level.
+L2 是空的，而 L1 有两个文件，因此 `(L2 / L1) * 100 = (0 / 2) * 100 = 0`，低于 200。控制器把 L1 与 L2 压缩。之后 L2 与 L3 之间也满足同样的条件，于是第二次压缩把这两个文件移到最底层。
 
 ```
 --- After Compaction ---
@@ -86,7 +86,7 @@ L2 (0): []
 L3 (2): [7, 8]
 ```
 
-After more flushes and compactions, the state can become:
+经过更多落盘与压缩之后，状态可能变成：
 
 ```
 L0 (0): []
@@ -95,7 +95,7 @@ L2 (2): [13, 14]
 L3 (2): [7, 8]
 ```
 
-At this point, `(L3 / L2) * 100 = (2 / 2) * 100 = 100`, which is below 200. The controller compacts L2 with L3.
+此时 `(L3 / L2) * 100 = (2 / 2) * 100 = 100`，低于 200。控制器把 L2 与 L3 压缩。
 
 ```
 --- After Compaction ---
@@ -105,7 +105,7 @@ L2 (0): []
 L3 (4): [15, 16, 17, 18]
 ```
 
-After additional flushes, the state might become:
+再经过若干次落盘之后，状态可能变成：
 
 ```
 --- After Flush ---
@@ -120,58 +120,58 @@ L2 (2): [23, 24]
 L3 (4): [15, 16, 17, 18]
 ```
 
-Because `L3/L2 = (4 / 2) * 100 = 200 >= size_ratio_percent (200)`, we do not need to merge L2 and L3. Simple leveled compaction always compacts a full level and maintains a target fanout between adjacent levels.
+因为 `L3/L2 = (4 / 2) * 100 = 200 >= size_ratio_percent (200)`，我们不需要合并 L2 和 L3。简单分层压缩总是压缩完整的层，并在相邻层之间维持目标扇出。
 
-The LSM state already contains `max_levels` levels. First implement the L0 trigger in `generate_compaction_task` and inspect a simulation. Then add the size-ratio trigger and implement `apply_compaction_result`. Run the simulator with:
+LSM 状态中已经包含 `max_levels` 个层。先在 `generate_compaction_task` 中实现 L0 触发条件，并观察一次模拟。然后加入大小比例触发条件，并实现 `apply_compaction_result`。用以下命令运行模拟器：
 
 ```shell
-cargo run --bin compaction-simulator-ref simple # Reference solution
-cargo run --bin compaction-simulator simple # Your solution
+cargo run --bin compaction-simulator-ref simple # 参考实现
+cargo run --bin compaction-simulator simple # 你的实现
 ```
 
-The simulator flushes an L0 SST, asks the controller for a task, and applies the result. After each flush, it repeatedly invokes the controller until no task remains, so your scheduling policy must converge.
+模拟器先落盘一个 L0 SST，再向控制器请求一个任务，然后应用结果。每次落盘后，它反复调用控制器，直到没有任务为止，因此你的调度策略必须收敛。
 
-The simulator models SSTs in memory as IDs, key ranges, and file counts; it does not create real SST files. Its `file_list` is bookkeeping for simulated file identity and amplification statistics. Update the LSM state only through the compaction controller's result, and let the simulator update `file_list` from the returned obsolete-file IDs.
+模拟器在内存中把 SST 建模为 ID、键范围和文件数；它不会创建真实的 SST 文件。它的 `file_list` 只是用于追踪模拟文件的身份和放大统计的记录。只通过压缩控制器返回的结果更新 LSM 状态，并让模拟器根据返回的过期文件 ID 更新 `file_list`。
 
-Use concat iterators for sorted runs to minimize active child iterators. Merge order still determines which version of a duplicate key survives, so construct every input in newest-to-oldest priority order.
+对有序段使用 concat 迭代器，以尽量减少活跃的子迭代器。合并顺序仍然决定重复键保留哪个版本，因此请按从新到旧的优先级顺序构造每个输入。
 
-Some values are zero-based vector indexes, while level numbers begin at one. Convert between them explicitly.
+有些值是从 0 开始的向量下标，而层号从 1 开始。请显式地在两者之间转换。
 
-**Note: we do not provide fine-grained unit tests for this part. You can run the compaction simulator and compare with the output of the reference solution to see if your implementation is correct.**
+**注意：这一部分我们不提供细粒度的单元测试。你可以运行压缩模拟器，并与参考实现的输出比较，判断你的实现是否正确。**
 
-## Task 2: Compaction Thread
+## 任务 2：压缩线程
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/compact.rs
 ```
 
-Run the controller from a background thread. `trigger_compaction` is called every 50 ms and should:
+在后台线程中运行控制器。`trigger_compaction` 每 50 ms 被调用一次，它应当：
 
-1. Generate a compaction task. If no task needs to be scheduled, return successfully.
-2. Run the compaction and obtain a list of new SSTs.
-3. As in `force_full_compaction`, install the result in the current LSM state.
+1. 生成一个压缩任务。如果没有需要调度的任务，成功返回。
+2. 运行压缩并获得一组新 SST。
+3. 像 `force_full_compaction` 那样，把结果安装到当前 LSM 状态中。
 
-## Task 3: Integrate with the Read Path
+## 任务 3：集成到读路径
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/lsm_iterator.rs
 src/lsm_storage.rs
 ```
 
-Extend both `get` and `scan` across every level below L1. Change the inner type of `LsmIterator` so that it merges one `SstConcatIterator` per level.
+把 `get` 和 `scan` 扩展到 L1 以下的每一层。修改 `LsmIterator` 的内层类型，使每一层对应一个 `SstConcatIterator` 并参与合并。
 
-To test your implementation interactively,
+要交互式地测试你的实现，
 
 ```shell
-cargo run --bin mini-lsm-cli-ref -- --compaction simple # reference solution
-cargo run --bin mini-lsm-cli -- --compaction simple # your solution
+cargo run --bin mini-lsm-cli-ref -- --compaction simple # 参考实现
+cargo run --bin mini-lsm-cli -- --compaction simple # 你的实现
 ```
 
-And then,
+然后，
 
 ```
 fill 1000 3000
@@ -184,35 +184,35 @@ get 2333
 scan 2000 2333
 ```
 
-You may print something, for example, the compaction task information, when the compactor triggers a compaction.
+当压缩器触发一次压缩时，你可以打印一些信息，例如压缩任务的信息。
 
-## Chapter Checkpoint
+## 本章检查点
 
-Your engine should now schedule simple leveled compactions in the background, preserve newer values across every merge, and read through all configured levels. The simulator should reach a state in which no further task is eligible.
+你的引擎现在应能在后台调度简单分层压缩，在每次合并中保留较新的值，并能读取所有已配置的层。模拟器应能到达一个不再有任务可被调度的状态。
 
-Compare a short simulator run with the reference output, then alter one parameter at a time. Explain why each task was selected, identify whether it reaches the bottom level, and verify that the next state still contains any L0 file created after the task snapshot.
+把一次较短的模拟运行与参考输出比较，然后一次只改一个参数。解释每个任务为什么被选中，指出它是否到达最底层，并确认下一个状态中仍包含任务快照之后创建的 L0 文件。
 
-## Test Your Understanding
+## 检验你的理解
 
-### Correctness and Scheduling
+### 正确性与调度
 
-* For a duplicate key present in both levels of a task, why must the upper-level iterator win? What stale result appears if the priority is reversed?
-* Why may a bottom-level compaction discard a tombstone while an L1-to-L2 compaction might need to retain it?
-* Construct a level-size configuration that causes an implementation with reversed ratio operands to select the wrong task.
-* What state must be rechecked when a background compaction finishes, and which concurrent change is expected rather than an error?
-* Can you merge L1 and L3 directly if there are SST files in L2? Does it still produce the correct result?
+* 对于同时出现在任务两层中的重复键，为什么上层迭代器必须胜出？如果优先级颠倒，会出现什么过期结果？
+* 为什么底层压缩可以丢弃墓碑（tombstone），而 L1 到 L2 的压缩可能需要保留它？
+* 构造一个层大小配置，使比例操作数写反的实现选错任务。
+* 后台压缩结束时必须重新检查什么状态，哪种并发变化属于预期而不是错误？
+* 如果 L2 中已有 SST 文件，你能否直接把 L1 和 L3 合并？结果仍然正确吗？
 
-### Amplification and Design
+### 放大与设计
 
-* Estimate write amplification for a steady-state overwrite workload. State the level count, size ratio, and how much of each lower level a task rewrites; explain why the chapter's full-level policy differs from partial leveled compaction.
-* Estimate worst-case point-read amplification with no cache or Bloom-filter benefit. State how you count L0 and each non-empty sorted run.
-* Is it correct that a key will only be purged from the LSM tree if the user requests to delete it and it has been compacted in the bottom-most level?
-* Is it a good strategy to periodically do a full compaction on the LSM tree? Why or why not?
-* Actively choosing some old files/levels to compact even if they do not violate the level amplifier would be a good choice, is it true? (Look at the [Lethe](https://disc-projects.bu.edu/lethe/) paper!)
-* If the storage device can achieve a sustainable 1GB/s write throughput and the write amplification of the LSM tree is 10x, how much throughput can the user get from the LSM key-value interfaces?
-* So far, SST filenames have used monotonically increasing IDs. What problems might arise from naming a file `<level>_<begin_key>_<end_key>.sst` instead? Revisit this question in Week 3.
-* What is your favorite boba shop in your city? (If you answered yes in week 1 day 3...)
+* 估算稳态覆盖写工作负载的写放大。说明层数、大小比例，以及一个任务会重写每个下层的多少内容；解释本章的整层策略为何不同于部分分层压缩。
+* 在没有缓存和布隆过滤器收益的情况下，估算最坏情况的点查放大。说明你如何计入 L0 和每个非空的有序段。
+* 只有用户请求删除某个键、并且该键在最底层被压缩过之后，它才会从 LSM 树中被清除，这个说法正确吗？
+* 定期对 LSM 树做一次完整压缩是好策略吗？为什么？
+* 即使某些旧文件或旧层没有超过层放大阈值，也主动选择压缩它们会是个好选择，这个说法正确吗？（看看 [Lethe](https://disc-projects.bu.edu/lethe/) 这篇论文！）
+* 如果存储设备能持续提供 1GB/s 的写吞吐，而 LSM 树的写放大是 10x，用户通过 LSM 键值接口能获得多少吞吐？
+* 到目前为止，SST 文件名使用单调递增的 ID。改用 `<level>_<begin_key>_<end_key>.sst` 命名可能带来什么问题？第三周会再讨论这个问题。
+* 你所在城市里你最喜欢的奶茶店是哪家？（如果你在 week 1 day 3 回答了「是」……）
 
-Use the [Week 2 end-of-week self-check](./week2-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs. You can also discuss them in the Discord community.
+用[第二周周末自检](./week2-overview.md#end-of-week-self-check)校验核心不变量。其余设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载和假设。你也可以在 Discord 社区讨论。
 
 {{#include copyright.md}}

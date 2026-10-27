@@ -2,9 +2,9 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Day 3 - Transactions and MVCC
+# 第三天：事务与 MVCC
 
-This is the third day of [Mini-LSM with Coding Agents](./agent-fast-forward-overview.md). You will turn the persistent Day 2 engine into a multi-version engine with stable snapshots, transaction-local writes, safe history reclamation, and commit-time conflict validation:
+这是 [Mini-LSM with Coding Agents](./agent-fast-forward-overview.md) 的第三天。你要把第二天的持久化引擎改造成一个多版本引擎，具备稳定的快照、事务本地写入、安全的历史回收，以及提交时的冲突校验：
 
 ```text
 user operations -> transaction snapshot + private workspace -> atomic commit
@@ -14,95 +14,95 @@ user operations -> transaction snapshot + private workspace -> atomic commit
                           \________ watermark + compaction ________/
 ```
 
-Week 3 adds several guarantees that are easy to blur together. Naming the guarantee before choosing a mechanism is part of the work. A shared timestamp can make a batch visible at once without making it durable, and a stable snapshot can still permit write skew.
+第三周加入了若干容易被混在一起的保证。在选择机制之前先给保证命名，这本身就是工作的一部分。共享的时间戳可以让一个批次一次性可见，却不会让它持久；稳定的快照仍然可能允许写偏斜。
 
-## What You Will Finish
+## 你将完成什么
 
-At the end of this path:
+这条路径结束时：
 
-- internal keys preserve `user key ascending, timestamp descending` through memory, SSTs, and compaction;
-- every read in a transaction observes one stable timestamp, including after later writes, flushes, and compactions;
-- a watermark protects the versions still needed by active transactions and scan iterators;
-- transaction-local writes provide read-your-writes and commit as one timestamped, crash-atomic WAL batch;
-- point-key validation rejects dependencies that would otherwise produce write skew;
-- the documented scan-phantom limitation remains visible instead of being mislabeled as full serializability;
-- compaction filters preserve versions above the watermark while making reads in a filtered prefix intentionally undefined; and
-- you can distinguish version order, visibility, atomicity, durability, and isolation when reviewing code and failures.
+- 内部键在内存、SST 和压缩中都保持 `user key ascending, timestamp descending`（用户键升序、时间戳降序）；
+- 事务中的每次读取都观察同一个稳定的时间戳，包括在之后的写入、落盘和压缩之后；
+- 水位线保护活跃事务和扫描迭代器仍然需要的版本；
+- 事务本地写入提供读己之写，并作为一个带时间戳、崩溃时原子的 WAL 批次提交；
+- 点键校验拒绝那些否则会产生写偏斜的依赖；
+- 文档中说明的扫描幻影限制保持可见，而不被误称为完整的可串行化；
+- 压缩过滤器在水位线之上保留版本，同时让被过滤前缀内的读取有意未定义；以及
+- 你能在审查代码和故障时区分版本顺序、可见性、原子性、持久性和隔离性。
 
-The supplied tests are evidence for these guarantees, not their definitions. In particular, a latest-state test can pass while an old snapshot is broken, and key-only validation can pass while a range phantom remains possible.
+提供的测试是这些保证的证据，而不是它们的定义。具体来说，最新状态的测试可能通过，而旧快照已经被破坏；只记录键的校验也可能通过，而范围幻影仍然可能出现。
 
-## Keep a Guarantee Ledger
+## 维护一份保证台账
 
-Extend the decision ledger from Days 1 and 2 with this Week 3 view. Fill in the mechanism and evidence as each checkpoint settles them:
+在第一天和第二天的决策台账基础上，扩展出这份第三周的视图。随着每个检查点确定下来，填入机制与证据：
 
-| Guarantee | Question to keep separate | Completed in |
+| 保证 | 需要分开看的问题 | 在何处完成 |
 | --- | --- | --- |
-| Version order | Which internal versions exist, and which comes first? | Checkpoint 1 |
-| Snapshot visibility | Which committed version may this `read_ts` observe? | Checkpoint 2 |
-| Atomic visibility | Can a reader observe only part of one committed batch? | Checkpoint 3 |
-| Crash atomicity | Can recovery expose a prefix of a torn batch? | Checkpoint 3 |
-| Durability | After which successful operation must the batch survive a crash? | Checkpoint 3 |
-| Isolation | Is the outcome equivalent to an allowed serial order? | Checkpoint 4, for tracked point-key dependencies |
+| 版本顺序 | 存在哪些内部版本，哪一个在前？ | 检查点 1 |
+| 快照可见性 | 这个 `read_ts` 可以观察到哪个已提交版本？ | 检查点 2 |
+| 原子可见性 | 读者能否只观察到某个已提交批次的一部分？ | 检查点 3 |
+| 崩溃原子性 | 恢复能否暴露一个撕裂批次的前缀？ | 检查点 3 |
+| 持久性 | 在哪一次成功操作之后，该批次必须经受崩溃？ | 检查点 3 |
+| 隔离性 | 执行结果是否等价于某个允许的串行顺序？ | 检查点 4，针对被跟踪的点键依赖 |
 
-For every adversarial case, first name which row it challenges. If an explanation uses “atomic” or “consistent,” require the speaker to say exactly which kind.
+对每个对抗性用例，先说出它挑战的是哪一行。如果某个解释用到「原子」或「一致」，就要求解释者明确指出是哪一种。
 
-## Prepare Day 3
+## 准备第三天
 
-Begin from a Day 2 implementation that passes its complete suite. In this chapter, **Day 3** names the course day, while `--week 3 --day N` names progressive **Week 3 test module Day N**. Use that full phrase when crossing test gates so the test-module number is not mistaken for the course day.
+从一份通过全部测试的第二天实现开始。本章中，**第三天**指课程的天数，而 `--week 3 --day N` 指递进的**第三周测试模块第 N 天**。跨越测试门槛时请使用完整说法，以免把测试模块编号误当作课程天数。
 
-Week 3 changes public interfaces as it proceeds, so copy tests progressively; later test modules may not compile against an intentionally incomplete earlier checkpoint. The preparation command below is the **sole course-defined exception** to the starter rule that supplied tests are revealed only after an independent first pass: copy Week 3 test module Day 1 before implementation so the initial compatibility failure is captured as evidence. After this preparation exception, do not copy any later Week 3 test module until the corresponding slice has a complete independent first pass.
+第三周在推进过程中会改变公共接口，因此要逐步复制测试；后面的测试模块可能无法针对一个有意不完整的早期检查点编译。下面的准备命令是起始代码规则（提供的测试只在独立第一版完成之后才揭示）的**唯一由课程定义的例外**：在实现之前先复制第三周测试模块第一天，以便把最初的兼容性失败作为证据记录下来。在这个准备例外之后，在对应的切片完成独立的第一版之前，不要复制任何后续的第三周测试模块。
 
-From the repository root, copy Week 3 test module Day 1 and record the first failure:
+在仓库根目录复制第三周测试模块第一天，并记录第一次失败：
 
 ```shell
 cargo x copy-test --week 3 --day 1
 cargo x scheck
 ```
 
-The starter's timestamp-aware key module is a provided course input. Copy it with this exact repository-root command; do not browse sibling implementations:
+起始代码中带时间戳的键模块是课程提供的输入。请用下面这条完全一致的仓库根目录命令复制它；不要浏览同级实现：
 
 ```shell
 cp mini-lsm-mvcc/src/key.rs mini-lsm-starter/src/key.rs
 ```
 
-After the copy, the key module is part of the permitted starter workspace. Never open its source path directly. Everything else under `mini-lsm-mvcc/`, and the entire reference implementation under `mini-lsm/`, remain prohibited except for `cargo x copy-test`.
+复制之后，键模块就属于允许使用的起始代码工作区。绝不要直接打开它的源文件路径。`mini-lsm-mvcc/` 下的其他内容，以及 `mini-lsm/` 下的整个参考实现，除了 `cargo x copy-test` 之外仍然禁止访问。
 
-The key copy command above and every `cargo x copy-test` command in this chapter run from the repository root even though the guided agent normally works from `mini-lsm-starter`. Treat each directory change as a narrow course operation: run the command exactly as shown, then return the agent to `mini-lsm-starter` before inspecting or editing anything. Do not replace it with exploratory reads of either source directory.
+上面的键复制命令和本章中每一条 `cargo x copy-test` 命令都在仓库根目录运行，尽管受指导的代理通常在 `mini-lsm-starter` 中工作。把每一次目录切换都当作一项范围很窄的课程操作：完全按所示运行命令，然后在检查或编辑任何内容之前把代理切回 `mini-lsm-starter`。不要用对两个源目录的探索性读取来代替这条命令。
 
-With the agent running from `mini-lsm-starter`, send:
+在代理从 `mini-lsm-starter` 运行时，发送：
 
-> Build Day 3 with me, starting with timestamped internal keys and batches. Follow the student-owned design protocol in `AGENTS.md`. Never access `../mini-lsm` or `../mini-lsm-mvcc`; only the exact key and test copy commands documented for Week 3 may read from those sources. Maintain both a decision ledger and the Day 3 guarantee ledger. Ask one short question at a time using a concrete version stream, snapshot, crash point, or transaction interleaving. Name the guarantee being tested, then mark the decision **Course rule** or **Your choice**. I may reply `simpler`, `example`, `hint`, or `choose for me`. Do not edit until my answers specify one small, coherent slice. After each slice, connect one important line to its guarantee and ask what would break if it changed.
+> 和我一起构建第三天，从带时间戳的内部键和批次开始。遵循 `AGENTS.md` 中学生主导的设计流程。绝不要访问 `../mini-lsm` 或 `../mini-lsm-mvcc`；只有第三周文档中记录的确切键复制与测试复制命令才可以从这些来源读取。同时维护决策台账和第三天的保证台账。每次只问一个短问题，并使用具体的版本流、快照、崩溃点或事务交替执行。说出正在测试的保证，然后把该决策标记为**课程规则**或**你的选择**。我可能会回复 `simpler`、`example`、`hint` 或 `choose for me`。在我的回答确定一个小的、自洽的切片之前，不要编辑。每完成一个切片，把一行重要的代码与它的保证联系起来，并问我如果改变它会破坏什么。
 
-The first useful response orders a few timestamped keys. It should not define every MVCC term, present the whole checkpoint table, or edit code. Use the checkpoints in order unless you can explain why another order preserves their dependencies.
+第一次有用的回答会为几个带时间戳的键排序。它不应定义所有 MVCC 术语、给出整张检查点表格，或者编辑代码。请按顺序使用这些检查点，除非你能说明为什么另一种顺序同样能保持它们的依赖关系。
 
-## Checkpoint 1: Store and Order Versions
+## 检查点 1：存储并排序版本
 
-Ask:
+提问：
 
-> Refactor the engine to store timestamped versions and make latest-state reads select one version.
+> 重构引擎，使其存储带时间戳的版本，并让最新状态的读取只选取一个版本。
 
-This checkpoint combines the representation and write-path work from [Timestamp Key Encoding](./week3-01-ts-key-refactor.md) and [Memtables and Timestamps](./week3-02-snapshot-read-part-1.md). The accepted design should use the final Week 3 batch-capable WAL framing now; this intentionally overrides the linked Day 2 chapter's temporary per-record format, so do not implement both.
+这个检查点结合了[时间戳键编码](./week3-01-ts-key-refactor.md)与[内存表与时间戳](./week3-02-snapshot-read-part-1.md)中的表示和写路径工作。被接受的设计应当现在就使用第三周最终的支持批次的 WAL 帧格式；这有意覆盖所链接的第二天章节中临时的逐记录格式，因此不要两者都实现。
 
-Derive these course rules from small states and byte layouts:
+从小的状态和字节布局中推导出这些课程规则：
 
-| Behavior to work out | Small case that exposes it |
+| 需要推导的行为 | 能暴露它的小例子 |
 | --- | --- |
-| Internal ordering | Sort `a@9`, `a@4`, `aa@7`, and `b@2`. |
-| Prefix compression | Encode two versions with the same user key and reconstruct each independently. |
-| SST summaries | Seek across a block boundary whose first and last user keys have several timestamps. |
-| Bloom-filter identity | Compare the fingerprints for `k@8` and `k@3`. |
-| User-range mapping | Translate `(a, b]` into internal bounds without leaking any `a` version or losing a `b` version. |
-| Batch timestamp allocation | Commit two concurrent batches, each containing two keys. |
-| Compaction output splitting | Cross the SST target in the middle of one user's version history. |
-| Latest-state collapse | Read `k@9=delete, k@7=v7, k@3=v3` at the latest timestamp. |
+| 内部排序 | 对 `a@9`、`a@4`、`aa@7` 和 `b@2` 排序。 |
+| 前缀压缩 | 编码两个具有相同用户键的版本，并分别独立重建它们。 |
+| SST 汇总信息 | 跨越一个块边界查找，该边界的首尾用户键各含多个时间戳。 |
+| 布隆过滤器同一性 | 比较 `k@8` 与 `k@3` 的指纹。 |
+| 用户范围映射 | 把 `(a, b]` 转换成内部边界，既不泄漏任何 `a` 版本，也不丢失任何 `b` 版本。 |
+| 批次时间戳分配 | 提交两个并发批次，每个包含两个键。 |
+| 压缩输出切分 | 在某个用户版本历史的中途越过 SST 目标大小。 |
+| 最新状态折叠 | 在最新时间戳上读取 `k@9=delete, k@7=v7, k@3=v3`。 |
 
-The fixed order is user-key bytes ascending and timestamp descending. Prefix compression applies only to user-key bytes; each timestamp is stored in full. Block metadata preserves complete internal first and last keys, while Bloom filters hash only user-key bytes because a lookup asks whether any version of that user key may exist.
+固定的顺序是用户键字节升序、时间戳降序。前缀压缩只作用于用户键字节；每个时间戳都完整存储。块元数据保留完整的第一和最后一个内部键，而布隆过滤器只哈希用户键字节，因为一次查找询问的是该用户键的任意版本是否存在。
 
-Translate each user bound once into an internal-key bound, then use that same result for memtable scans, L0 SST seeks, and leveled-SST seeks. Trace all four lower/upper inclusion combinations before and after flushing into both L0 and a leveled SST; no storage path may reinterpret the user bounds independently.
+把每个用户边界一次性转换成内部键边界，然后把这个相同的结果用于内存表扫描、L0 SST 查找和分层 SST 查找。在落盘到 L0 和分层 SST 之前与之后，跟踪全部四种上下界包含组合；任何存储路径都不得独立地重新解释用户边界。
 
-One committed write batch receives one new timestamp. Hold `write_lock` across timestamp allocation, insertion into one memtable and WAL, and publication of `latest_commit_ts`; otherwise concurrent writers can reuse or publish timestamps out of order. A batch may exceed the memtable size target, but it must not be split between memtables.
+一个已提交的写批次获得一个新时间戳。在时间戳分配、插入同一个内存表和 WAL、发布 `latest_commit_ts` 的整个过程中持有 `write_lock`；否则并发写者可能复用时间戳或以错误的顺序发布它们。一个批次可以超出内存表大小目标，但不得在多个内存表之间拆分。
 
-Use the final WAL batch grammar:
+使用最终的 WAL 批次语法：
 
 ```text
 batch_body_len:u32
@@ -111,71 +111,71 @@ batch_body_len:u32
   | body_checksum:u32
 ```
 
-The checksum covers the complete body. Reject keys, values, and batch bodies that do not fit their `u16` or `u32` fields instead of truncating a cast. `Wal::put` should use the batch path for one record.
+校验和覆盖完整的正文。对于放不进其 `u16` 或 `u32` 字段的键、值和批次正文，应当拒绝，而不是截断转换结果。`Wal::put` 应当为单条记录走批次路径。
 
-Recovery uses one complete frame, or write batch, as its atomicity unit. Clean EOF succeeds when the cursor is exactly between frames. If EOF arrives inside the final frame's header, body, or checksum, treat that frame as a crash-torn tail: emit a warning, discard only the incomplete frame, and return success. Earlier complete frames remain replayable.
+恢复以一个完整的帧（也就是写批次）作为原子性单位。当游标恰好位于帧之间时，干净的 EOF 视为成功。如果 EOF 落在最后一帧的头部、正文或校验和内部，就把该帧视为崩溃撕裂的尾部：发出警告，只丢弃这个不完整的帧，并返回成功。先前完整的帧仍然可以重放。
 
-Stage the entries for one frame separately and publish them only after that frame's lengths and checksum validate. A fully present frame with a checksum mismatch or invalid nested key/value length returns `Err` as corruption; do not treat it as a normal torn tail. If a bad frame follows a valid one, entries from the earlier validated frame remain replayed, but recovery never publishes a prefix of the bad frame.
+先把一帧的条目单独暂存，只有在该帧的长度和校验和都通过校验之后才发布它们。一帧完整存在但校验和不匹配或嵌套的键/值长度非法，属于损坏，返回 `Err`；不要把它当作正常的撕裂尾部。如果损坏的帧跟在有效帧之后，先前已校验帧的条目仍会被重放，但恢复绝不会发布损坏帧的任何前缀。
 
-Append the complete WAL frame before inserting any entry into the memtable, and publish `latest_commit_ts` only after every memtable entry is installed. A WAL error therefore exposes no in-memory update. After a process stop, recovery may replay every complete persisted frame and discard an unsynchronized torn final frame, but it must never expose a prefix of any frame. Synchronization remains a separate durability guarantee.
+在把任何条目插入内存表之前，先追加完整的 WAL 帧；并且只有在每个内存表条目都安装好之后才发布 `latest_commit_ts`。因此一次 WAL 错误不会暴露任何内存中的更新。进程停止之后，恢复可以重放每一个完整持久化的帧，并丢弃未同步的撕裂最后一帧，但它绝不能暴露任何帧的前缀。同步仍然是单独的持久性保证。
 
-Compaction keeps every version for now. It may split output between user keys but never between versions of one user key. Latest-state `get` and `scan` skip repeated versions after selecting the newest visible entry and treat a selected tombstone as absence rather than continuing to an older value.
+目前压缩保留每一个版本。它可以在用户键之间切分输出，但绝不在同一个用户键的多个版本之间切分。最新状态的 `get` 和 `scan` 在选出最新的可见条目之后跳过重复版本，并把被选中的墓碑视为不存在，而不是继续查找更旧的值。
 
-Reusing the merged scan path for `get` does not remove the point-read Bloom optimization. Hash only the user key and discard impossible SST probes before constructing their iterators; otherwise a correct refactor can quietly turn every point read into work across all overlapping files.
+让 `get` 复用归并扫描路径并不会取消点读的布隆过滤器优化。只哈希用户键，并在构造迭代器之前丢弃不可能的 SST 探查；否则一次正确的重构可能悄悄把每次点读变成跨越所有重叠文件的工作。
 
-Checkpoint 1 is not one edit. Use this default slice order and obtain separate authorization for each slice:
+检查点 1 不是一次编辑。请使用这个默认切片顺序，并为每个切片分别取得授权：
 
-1. block/SST encoding, metadata, and Bloom identity;
-2. finish the timestamp-zero Week 3 test module Day 1 engine refactor and pass its focused tests;
-3. implement timestamped memtables, internal range bounds, latest-state iteration, final WAL framing, batch timestamp allocation, and the write path; and
-4. implement compaction retention and output boundaries.
+1. 块/SST 编码、元数据和布隆过滤器同一性；
+2. 完成时间戳为零的第三周测试模块第一天引擎重构，并让它的针对性测试通过；
+3. 实现带时间戳的内存表、内部范围边界、最新状态迭代、最终 WAL 帧格式、批次时间戳分配和写路径；以及
+4. 实现压缩的版本保留与输出边界。
 
-After slice 3 forms one compiling first pass, run the non-test gate and only then reveal Week 3 test module Day 2:
+在第 3 个切片形成一次可编译的第一版之后，先运行非测试门槛，然后才揭示第三周测试模块第二天：
 
 ```shell
 cargo check -p mini-lsm-starter --lib
 cargo x copy-test --week 3 --day 2
 ```
 
-Then implement slice 4 before the focused tests and independent checks below.
+然后在下面的针对性测试和独立检查之前实现第 4 个切片。
 
-Before approving the checkpoint, independently calculate one encoded entry and exercise all four included/excluded range combinations through the memtable and again after flush into L0 and a leveled SST. After one valid WAL frame, truncate a second frame in its header, body, and checksum; each case should warn, succeed, replay the first frame, and publish none of the second. Then corrupt the checksum or nested lengths of a fully present second frame; recovery should return `Err`, retain the first frame's entries, and publish none of the corrupt frame. Explain which guarantee each case checks. After focused tests pass, have the agent point to the shared user-bound conversion, the internal-key comparison, and the condition that prevents an SST split within one user key.
+在批准这个检查点之前，独立计算一个编码后的条目，并让全部四种包含/不包含范围组合经过内存表，再在落盘到 L0 和分层 SST 之后重复一次。在一条有效的 WAL 帧之后，分别在头部、正文和校验和处截断第二条帧；每种情况都应当给出警告、成功、重放第一条帧，并且不发布第二条帧的任何内容。然后破坏一帧完整存在的第二条帧的校验和或嵌套长度；恢复应当返回 `Err`，保留第一条帧的条目，并且不发布损坏帧的任何内容。解释每种情况检查的是哪个保证。针对性测试通过之后，让代理指出共用的用户边界转换、内部键比较，以及防止在一个用户键内部切分 SST 的条件。
 
-Do not use the complete historical suite as the pass/fail gate for this intermediate state. Checkpoint 1 deliberately retains bottom-level tombstones, while the Week 2 all-tombstones test expects the pre-MVCC compactor to remove them. Run the focused Week 3 test modules Day 1 and Day 2 instead:
+不要把完整的历史测试套件当作这个中间状态的通过/失败门槛。检查点 1 有意保留底层墓碑，而第二周的全墓碑测试期望 MVCC 之前的压缩器删除它们。请改为运行第三周测试模块第一天和第二天：
 
 ```shell
 cargo test -p mini-lsm-starter --lib week3_day
 ```
 
-Classify the one legacy tombstone mismatch as expected; do not restore unsafe deletion merely to make it green. Checkpoint 2 reintroduces safe bottom-level removal using the watermark, after which `cargo x scheck` must pass again.
+把一个遗留的墓碑不匹配归类为预期结果；不要仅仅为了让它通过就恢复不安全的删除。检查点 2 会利用水位线重新引入安全的底层删除，此后 `cargo x scheck` 必须再次通过。
 
-## Checkpoint 2: Hold a Stable Snapshot and Reclaim Safely
+## 检查点 2：持有稳定的快照并安全回收
 
-Ask:
+提问：
 
-> Add fixed-timestamp transactions, recovery of the timestamp oracle, and watermark-based garbage collection.
+> 加入固定时间戳的事务、时间戳分配器的恢复，以及基于水位线的垃圾回收。
 
-Use [Snapshot Read - Transaction API](./week3-03-snapshot-read-part-2.md) and [Watermark and Garbage Collection](./week3-04-watermark.md) as references.
+以[快照读：事务 API](./week3-03-snapshot-read-part-2.md)与[水位线与垃圾回收](./week3-04-watermark.md)作为参考。
 
-Work out these rules from concrete version streams and reader lifetimes:
+从具体的版本流和读操作生命周期中推导出这些规则：
 
-| Behavior to work out | Small case that exposes it |
+| 需要推导的行为 | 能暴露它的小例子 |
 | --- | --- |
-| Snapshot selection | Read `a@7=delete, a@5=v5, a@2=v2` at timestamps 8, 6, 5, and 1. |
-| Stable transaction timestamp | Read, commit a newer batch elsewhere, then read again in the original transaction. |
-| Iterator ownership | Drop the transaction handle while its scan iterator remains alive. |
-| Reader counts | Hold readers at timestamps 3, 3, and 7, then drop them one at a time. |
-| Version garbage collection | Compact `k@8`, `k@5`, and `k@2` with watermark 5. |
-| Bottom-level tombstone removal | Compare the same tombstone in a middle-level and bottom-level task. |
-| Timestamp recovery | Reopen once with the maximum timestamp in an SST and once in a live WAL-backed memtable. |
+| 快照选取 | 在时间戳 8、6、5 和 1 上读取 `a@7=delete, a@5=v5, a@2=v2`。 |
+| 稳定的事务时间戳 | 读取，在别处提交一个更新的批次，然后在原事务中再次读取。 |
+| 迭代器的所有权 | 在扫描迭代器仍然存活时丢弃事务句柄。 |
+| 读操作计数 | 在时间戳 3、3 和 7 上持有读操作，然后逐个丢弃。 |
+| 版本垃圾回收 | 在水位线 5 下压缩 `k@8`、`k@5` 和 `k@2`。 |
+| 底层墓碑删除 | 比较中间层任务与底层任务中的同一个墓碑。 |
+| 时间戳恢复 | 分别在最大时间戳位于 SST 中、以及位于存活的 WAL 内存表中时重新打开。 |
 
-A transaction records `read_ts = latest_commit_ts` and registers it with the watermark before compaction can race past it. For each user key, the iterator skips versions above `read_ts`, chooses the first remaining version, suppresses it if it is a tombstone, and then skips the rest of that user's versions. `TxnIterator` owns the transaction so a partially consumed scan keeps its snapshot registered.
+事务记录 `read_ts = latest_commit_ts`，并在压缩可能越过它之前向水位线注册。对每个用户键，迭代器跳过 `read_ts` 之上的版本，选取剩余的第一个版本，如果它是墓碑就抑制它，然后跳过该用户键其余的版本。`TxnIterator` 拥有该事务，因此部分消费的扫描会让它的快照保持注册。
 
-The watermark stores a reader count for each timestamp, not merely a set of timestamps. Dropping one of two readers at timestamp 3 must therefore leave timestamp 3 registered. The starter's diagnostic `num_retained_snapshots()` reports the number of distinct timestamp buckets (`readers.len()`), not the sum of those counts; use the watermark movement, not that diagnostic alone, to prove duplicate-reader correctness. Compaction retains every version above the watermark and the newest version at or below it. It may remove that selected version when it is a tombstone only if the task reaches the bottom and no older value can survive elsewhere.
+水位线为每个时间戳存储一个读操作计数，而不只是一个时间戳集合。因此，丢弃时间戳 3 上两个读操作中的一个之后，时间戳 3 必须仍然保持注册。起始代码的诊断方法 `num_retained_snapshots()` 报告的是不同时间戳桶的数量（`readers.len()`），而不是这些计数的总和；请用水位线的移动、而不是只靠这个诊断，来证明重复读操作的正确性。压缩保留水位线之上的每一个版本，以及等于或低于水位线的最新版本。只有当任务到达底层、且别处不可能有更旧的值存活时，它才可以删除那个被选中的墓碑版本。
 
-Store each SST's maximum timestamp and initialize the timestamp oracle from every live SST and recovered WAL-backed memtable. The first post-recovery batch must receive a strictly larger timestamp. This prevents reuse among recoverable versions; if a production design must never reuse a timestamp after all evidence of it has been garbage-collected, it needs an additional durable timestamp high-water mark.
+存储每张 SST 的最大时间戳，并从每一个存活的 SST 和恢复出的 WAL 内存表初始化时间戳分配器。恢复后的第一个批次必须获得一个严格更大的时间戳。这防止在可恢复的版本之间复用时间戳；如果生产环境的设计要求在一个时间戳的所有证据都被垃圾回收之后再也不能复用它，那就需要一个额外的持久化时间戳高水位标记。
 
-This checkpoint necessarily evolves public interfaces: starting a transaction must return a transaction handle, and both engine scan methods must return an iterator that owns its transaction. These are **Course rule** changes, not compiler-directed mechanics. The complete required signature set is:
+这个检查点必然改变公共接口：开始一个事务必须返回事务句柄，引擎的两个扫描方法都必须返回拥有其事务的迭代器。这些是**课程规则**的改动，而不是编译器驱动的机械修改。完整必需的签名集合是：
 
 ```text
 MiniLsm:
@@ -189,13 +189,13 @@ pub fn scan(self: &Arc<Self>, lower: Bound<&[u8]>, upper: Bound<&[u8]>)
     -> Result<crate::mvcc::txn::TxnIterator>
 ```
 
-Treat this block as the approval list: have the agent cite the copied tests and starter interfaces, preview all four signatures together, and obtain slice authorization for the complete list before editing any of them. If the proposed diff changes another public signature, stop and request separate approval instead of classifying it as a mechanical follow-on.
+把这个代码块当作批准清单：让代理引用复制来的测试和起始代码接口，一起预览全部四个签名，并在编辑其中任何一个之前取得对整个清单的切片授权。如果提议的 diff 改动了另一个公共签名，就停下来并要求单独批准，而不要把它归类为机械的后续改动。
 
-The starter already gives `Transaction::get`, `scan`, and `commit` a `Result` return type, while `put` and `delete` return `()`. Do not silently change the latter two merely to unify use-after-commit handling; that is a separate public-API choice and the supplied tests call them as non-fallible statements.
+起始代码已经给 `Transaction::get`、`scan` 和 `commit` 返回 `Result`，而 `put` 和 `delete` 返回 `()`。不要仅仅为了统一提交后使用的处理就悄悄改动后两个签名；那是一个单独的公共 API 选择，而且提供的测试把它们当作不会失败的语句来调用。
 
-The starter also already uses the final `TxnIterator` shape that merges a local iterator with the engine iterator. Before Day 5, preserve that shape by making the local side an empty, validly constructed stream. Do not simplify the struct for Day 3 and then churn it back two slices later.
+起始代码也已经使用了最终的 `TxnIterator` 形态，即把本地迭代器与引擎迭代器合并。在第五天之前，通过把本地一侧构造成一个空的、可合法构造的流来保持这个形态。不要为了第三天简化这个结构，然后在两个切片之后又改回来。
 
-Implement snapshot selection, transaction ownership, and timestamp recovery as one coherent first pass. Once that slice compiles without supplied tests, reveal Week 3 test module Day 3 and run its focused gate:
+把快照选取、事务所有权和时间戳恢复作为一个连贯的第一版来实现。一旦这个切片在没有提供的测试的情况下可以编译，就揭示第三周测试模块第三天并运行它的针对性门槛：
 
 ```shell
 cargo check -p mini-lsm-starter --lib
@@ -203,7 +203,7 @@ cargo x copy-test --week 3 --day 3
 cargo test -p mini-lsm-starter --lib week3_day3
 ```
 
-After Day 3 passes, implement watermark reader counts and compaction garbage collection as another independent first pass. Compile before revealing Week 3 test module Day 4:
+第三天通过之后，把水位线的读操作计数和压缩中的垃圾回收作为另一个独立的第一版来实现。在揭示第三周测试模块第四天之前先编译：
 
 ```shell
 cargo check -p mini-lsm-starter --lib
@@ -211,42 +211,42 @@ cargo x copy-test --week 3 --day 4
 cargo test -p mini-lsm-starter --lib week3_day4
 ```
 
-Before approving the checkpoint, keep old transactions alive across overwrite, deletion, flush, and compaction. Compare their `get` and bounded `scan` results before and after each transition. Separately, close and reopen databases whose largest timestamp is first in an SST and then in a live WAL-backed memtable; confirm the next batch receives a larger timestamp. Have the agent identify the ownership edge that keeps an abandoned scan's timestamp live and ask what compaction could reclaim if that edge disappeared.
+在批准这个检查点之前，让旧事务跨越覆盖写、删除、落盘和压缩保持存活。在每一次状态转变前后比较它们的 `get` 与有界 `scan` 结果。另外，分别关闭并重新打开最大时间戳先位于某张 SST 中、然后位于存活 WAL 内存表中的数据库；确认下一个批次获得更大的时间戳。让代理指出让被弃置扫描的时间戳保持存活的所有权边界，并问如果这条边界消失，压缩可能回收什么。
 
-## Checkpoint 3: Publish One Transaction Atomically
+## 检查点 3：原子地发布一个事务
 
-Ask:
+提问：
 
-> Add a private transaction workspace, read-your-writes, and one atomic commit path.
+> 加入私有事务工作区、读己之写，以及一条原子提交路径。
 
-This checkpoint covers [Transaction Workspace and Atomic Commit](./week3-05-txn-occ.md). Keep the guarantee ledger visible: local isolation, atomic visibility, crash atomicity, and durability are different claims.
+这个检查点覆盖[事务工作区与原子提交](./week3-05-txn-occ.md)。让保证台账保持可见：本地隔离、原子可见性、崩溃原子性和持久性是不同的主张。
 
-The agent should help you derive:
+代理应当帮助推导出：
 
-| Behavior to work out | Small case that exposes it |
+| 需要推导的行为 | 能暴露它的小例子 |
 | --- | --- |
-| Local precedence | Overlay `a=new, b=delete, c=new` on snapshot `a=old, b=old`. |
-| Local visibility | Read the workspace from its owner, another new transaction, and an older transaction. |
-| Use after commit | Call every transaction operation after the first commit attempt. |
-| Atomic visibility | Give all records one timestamp, pause after one memtable insertion, and withhold timestamp publication. |
-| Crash atomicity | Stop after each prefix of one framed WAL batch. |
-| Publication order | Fail WAL append, pause after the first memtable insertion, fail freeze maintenance, and fail `sync` separately. |
-| Oversized commit | Commit a batch larger than the memtable target. |
+| 本地优先 | 在快照 `a=old, b=old` 上叠加 `a=new, b=delete, c=new`。 |
+| 本地可见性 | 分别从它的所有者、另一个新事务和一个更旧的事务读取该工作区。 |
+| 提交后使用 | 在第一次提交尝试之后调用每一个事务操作。 |
+| 原子可见性 | 给所有记录一个时间戳，在一次内存表插入之后暂停，并扣住时间戳的发布。 |
+| 崩溃原子性 | 在一个分帧 WAL 批次的每一个前缀之后停止。 |
+| 发布顺序 | 分别让 WAL 追加失败、在第一次内存表插入之后暂停、让冻结维护失败，以及让 `sync` 失败。 |
+| 超大提交 | 提交一个大于内存表目标的批次。 |
 
-The private skiplist is the newest source for its owning transaction. Local tombstones hide both local and engine values. Mark a transaction committed before publishing its writes so repeated `get`, `scan`, `put`, `delete`, or `commit` calls are all rejected under their existing contracts. Methods returning `Result` can return an error; the starter's non-fallible `put` and `delete` need a deterministic rejection such as an assertion unless the student explicitly approves changing their public signatures. Consistency here means no operation continues using the transaction, not that every method must acquire the same return type.
+私有跳表是其所属事务最新的来源。本地墓碑同时遮住本地值和引擎值。在发布一个事务的写入之前先把它标记为已提交，这样重复的 `get`、`scan`、`put`、`delete` 或 `commit` 调用都会按各自的契约被拒绝。返回 `Result` 的方法可以返回错误；起始代码中不会失败的 `put` 和 `delete` 需要一个确定性的拒绝方式，例如断言，除非学生明确批准改动它们的公共签名。这里的一致指的是没有任何操作继续使用该事务，而不是每个方法都必须采用相同的返回类型。
 
-Submit the collected workspace through the existing batch path. WAL append precedes memtable visibility. Publish the commit timestamp after the batch is accepted and before fallible freeze maintenance, so a maintenance error cannot cause timestamp reuse. Check the memtable size only after the complete batch is in one memtable and WAL.
+通过现有的批次路径提交收集到的工作区。WAL 追加先于内存表可见。在批次被接受之后、可能失败的冻结维护之前发布提交时间戳，这样维护错误就不会导致时间戳复用。只有整个批次都已经在同一个内存表和同一个 WAL 中之后，才检查内存表大小。
 
-The skiplist insertion path has no provided failpoint or returned insertion error. Treat the mid-insertion case as a controlled pause: a concurrent transaction must still receive the old published timestamp and see none of the new batch. If the process stops there, recovery may replay the complete frame or lose it before `sync`, but it must never expose a prefix. Treat WAL, freeze, and `sync` failures as explicit traces unless the local code already offers a narrow failpoint; do not invent a new public failure API merely for this checkpoint.
+跳表插入路径没有提供的故障注入点，也不返回插入错误。把插入中途的情况当作一次受控暂停：并发事务仍然必须获得旧的已发布时间戳，并且看不到新批次的任何内容。如果进程在此停止，恢复可能重放完整的帧，也可能在 `sync` 之前丢失它，但它绝不能暴露前缀。把 WAL、冻结和 `sync` 的失败当作显式的追踪，除非本地代码已经提供了范围很窄的故障注入点；不要仅仅为了这个检查点就发明新的公共失败 API。
 
-Calibrate each claim independently:
+请独立校准每一条主张：
 
-- one shared timestamp, complete memtable installation, and delayed publication of `latest_commit_ts` together give **atomic visibility**; a shared timestamp alone is insufficient if a reader can select it mid-installation;
-- one validated WAL frame gives **crash atomicity** during recovery;
-- successful `sync` establishes the documented **durability** boundary; and
-- none of these performs conflict validation or prevents write skew.
+- 共享的时间戳、完成的内存表安装，以及延迟发布 `latest_commit_ts` 三者一起提供**原子可见性**；如果读者能在安装中途选中它，仅有共享时间戳并不够；
+- 一条经过校验的 WAL 帧在恢复期间提供**崩溃原子性**；
+- 成功的 `sync` 建立文档所述的**持久性**边界；以及
+- 这些都不会执行冲突校验或防止写偏斜。
 
-Complete the private workspace, iterator merge, rejection, batch commit, and framed-WAL recovery as one coherent first pass. Once it compiles without the supplied module, reveal Week 3 test module Day 5 and run its focused gate:
+把私有工作区、迭代器合并、拒绝、批次提交和分帧 WAL 恢复作为一个连贯的第一版来完成。一旦它在没有提供的模块的情况下可以编译，就揭示第三周测试模块第五天并运行它的针对性门槛：
 
 ```shell
 cargo check -p mini-lsm-starter --lib
@@ -254,33 +254,33 @@ cargo x copy-test --week 3 --day 5
 cargo test -p mini-lsm-starter --lib week3_day5
 ```
 
-Before approving the checkpoint, predict what the caller and recovery may observe at each failure point. Run a torn-batch case that would expose a prefix if recovery mutated the memtable before validating the frame. After focused tests pass, have the agent explain the exact line separating WAL acceptance from memtable publication.
+在批准这个检查点之前，预测调用方和恢复在每个失败点可能观察到什么。运行一个撕裂批次的用例，如果恢复在校验帧之前就修改了内存表，这个用例就会暴露前缀。针对性测试通过之后，让代理解释分隔 WAL 接受与内存表发布的准确那一行。
 
-## Checkpoint 4: Validate Dependencies and Filter History
+## 检查点 4：校验依赖并过滤历史
 
-Ask:
+提问：
 
-> Add point-key serializable validation, then integrate compaction filters with their undefined-read contract.
+> 加入点键的可串行化校验，然后集成压缩过滤器及其未定义读取的契约。
 
-Use [Serializable Validation](./week3-06-serializable.md) and [Compaction Filters](./week3-07-compaction-filter.md) as references.
+以[可串行化校验](./week3-06-serializable.md)与[压缩过滤器](./week3-07-compaction-filter.md)作为参考。
 
-First work out commit-time validation:
+先推导提交时校验：
 
-| Behavior to work out | Small case that exposes it |
+| 需要推导的行为 | 能暴露它的小例子 |
 | --- | --- |
-| Write skew | T1 reads `b` and writes `a`; T2 reads `a` and writes `b`. |
-| Missing-key dependency | T1 reads missing `x`; T2 inserts `x`; T1 tries to commit a dependent write. |
-| Blind writes | Two transactions write the same key without reading it. |
-| Validation race | Release `commit_lock` after checking but before publishing. |
-| Read-only transaction | Commit an empty workspace without allocating a timestamp or retaining metadata. |
-| Metadata reclamation | Advance the watermark beyond old committed write sets. |
-| Range phantom | Scan an empty interval while another transaction inserts into its gap. |
+| 写偏斜 | T1 读取 `b` 并写入 `a`；T2 读取 `a` 并写入 `b`。 |
+| 缺失键依赖 | T1 读取不存在的 `x`；T2 插入 `x`；T1 尝试提交一个依赖该键的写入。 |
+| 盲目写入 | 两个事务在未读取的情况下写入同一个键。 |
+| 校验竞争 | 在检查之后、发布之前释放 `commit_lock`。 |
+| 只读事务 | 提交一个空工作区，不分配时间戳，也不保留元数据。 |
+| 元数据回收 | 把水位线推进到旧的已提交写集合之后。 |
+| 范围幻影 | 扫描一个空区间，同时另一个事务向它的空隙中插入。 |
 
-For a writing transaction, hold `commit_lock` across validation, timestamp allocation, publication, and insertion of its committed write set. Compare the current read set with write sets committed after its `read_ts`. Record point-read misses because absence can influence a decision. A failed validation publishes neither data nor metadata.
+对于写事务，在校验、时间戳分配、发布以及插入其已提交写集合的整个过程中持有 `commit_lock`。把当前读集合与 `read_ts` 之后提交的写集合比较。记录点读的未命中，因为不存在本身可能影响决策。校验失败时不发布任何数据，也不发布元数据。
 
-This is conservative point-key validation, not the full Serializable Snapshot Isolation algorithm. It can reject some serializable histories, and scans record returned-key hashes rather than predicates or gaps. The empty-range insertion above can therefore pass. Treat that limitation as a required explanation, not a hidden test gap or permission to claim full serializability.
+这是保守的点键校验，不是完整的可串行化快照隔离算法。它可能拒绝一些本来可串行化的历史，而扫描记录的是返回键的哈希，而不是谓词或空隙。因此上面那个空区间插入的例子可以通过。请把这个限制当作必须能解释的内容，而不是隐藏的测试缺口，也不是声称完整可串行化的许可。
 
-Implement commit-time point-key validation and metadata reclamation as one coherent first pass. Compile before revealing Week 3 test module Day 6:
+把提交时的点键校验和元数据回收作为一个连贯的第一版来实现。在揭示第三周测试模块第六天之前先编译：
 
 ```shell
 cargo check -p mini-lsm-starter --lib
@@ -288,9 +288,9 @@ cargo x copy-test --week 3 --day 6
 cargo test -p mini-lsm-starter --lib week3_day6
 ```
 
-Then add compaction filters as another independent first pass. Versions above the watermark remain untouched even when their user key matches. When the first matching version at or below the watermark is selected, omit it and every older version of that user key from the task's output. This deletion policy intentionally overrides ordinary snapshot visibility inside the filtered prefix: even an existing transaction may lose a version at or below the watermark. Such reads remain undefined, and older matching versions can also survive outside the current task.
+然后把压缩过滤器作为另一个独立的第一版加入。水位线之上的版本保持不动，即使它们的用户键匹配。当选中第一个等于或低于水位线的匹配版本时，从该任务的输出中省略它以及该用户键所有更旧的版本。这条删除策略有意覆盖被过滤前缀内部的普通快照可见性：即使是一个既有事务，也可能失去一个等于或低于水位线的版本。这类读取仍然是未定义的，而且更旧的匹配版本也可能在当前任务之外存活。
 
-Once the filter slice compiles without its supplied tests, reveal Week 3 test module Day 7 and run its focused gate:
+一旦过滤器切片在没有其提供的测试的情况下可以编译，就揭示第三周测试模块第七天并运行它的针对性门槛：
 
 ```shell
 cargo check -p mini-lsm-starter --lib
@@ -298,44 +298,44 @@ cargo x copy-test --week 3 --day 7
 cargo test -p mini-lsm-starter --lib week3_day7
 ```
 
-Before approving the checkpoint, reproduce the point-read write-skew abort and the scan-phantom limitation. Name why one is prevented and the other is not. Then, with watermark 5, filter `k@8, k@5, k@2`: predict that `k@8` survives while `k@5` and `k@2` may disappear, and explain why a read at timestamp 5 is outside the contract. Advance the watermark to 8, compact again, and trace the remaining history.
+在批准这个检查点之前，复现点读写偏斜的中止和扫描幻影的限制。说明为什么一个被防止、另一个没有。然后在水位线 5 下过滤 `k@8, k@5, k@2`：预测 `k@8` 存活，而 `k@5` 与 `k@2` 可能消失，并解释为什么在时间戳 5 上的读取不在契约范围内。把水位线推进到 8，再次压缩，并跟踪剩余的历史。
 
-## Audit the Finished MVCC Engine
+## 审查完成的 MVCC 引擎
 
-Run the complete project check from the repository root:
+在仓库根目录运行完整的项目检查：
 
 ```shell
 cargo x scheck
 ```
 
-Then ask the agent for a final evidence report containing:
+然后要求代理给出一份最终证据报告，包含：
 
-1. the combined decision and guarantee ledgers, including delegated choices;
-2. the exact commands and outcomes;
-3. one internal-key byte layout and user-range-to-internal-range translation;
-4. one key traced through overwrite, tombstone, an old live snapshot, flush, and compaction, plus a separate timestamp-oracle trace through restart;
-5. one transaction traced through local reads, WAL acceptance, memtable publication, timestamp publication, `sync`, and later visibility;
-6. one write-skew dependency that aborts and one scan phantom the implementation still permits;
-7. the versions retained at a selected watermark, with and without a matching compaction filter; and
-8. one weakness not established by the supplied tests.
+1. 合并后的决策台账与保证台账，包括被委托做出的选择；
+2. 确切的命令及其结果；
+3. 一种内部键的字节布局，以及从用户范围到内部范围的转换；
+4. 一个键依次经过覆盖写、墓碑、一个存活的旧快照、落盘和压缩的追踪，另加一条独立的时间戳分配器跨越重启的追踪；
+5. 一个事务依次经过本地读取、WAL 接受、内存表发布、时间戳发布、`sync` 和之后可见性的追踪；
+6. 一个会被中止的写偏斜依赖，以及一个实现仍然允许的扫描幻影；
+7. 在选定水位线下保留的版本，分别在带与不带匹配的压缩过滤器时；以及
+8. 一项提供的测试未能证实的弱点。
 
-Inspect the actual diff and output. Check for modified supplied tests, removed assertions, broad lint suppressions, unsafe lifetime conversions that can escape a synchronous lookup, timestamp allocation outside its lock, WAL recovery that mutates state before validating a complete batch, and claims of full serializability based only on returned scan keys.
+检查实际的 diff 和输出。留意被改动的提供测试、被删除的断言、范围过宽的 lint 抑制、可能逃出同步查找的不安全生命周期转换、在锁之外的时间戳分配、在校验完整批次之前就修改状态的 WAL 恢复，以及仅凭返回的扫描键就声称完整可串行化的说法。
 
-Finally, introduce and immediately revert one small fault whose guarantee you can name. Good choices include sorting timestamps ascending, dropping a scan's transaction owner, retaining only versions above the watermark, publishing the memtable before WAL append, releasing `commit_lock` between validation and publication, or filtering versions above the watermark. Predict the failing test or trace before running it.
+最后，引入并立即回滚一处你能说出其保证的小故障。好的选择包括：把时间戳改为升序排序、丢弃扫描的事务所有者、只保留水位线之上的版本、在 WAL 追加之前发布内存表、在校验与发布之间释放 `commit_lock`，或者过滤水位线之上的版本。在运行之前先预测失败的测试或追踪。
 
-## Day 3 Completion Checkpoint
+## 第三天完成检查点
 
-You have completed the three-day track when you can do these without delegating the explanation back to the agent:
+当你能在不把解释推回给代理的情况下完成下面这些事，你就完成了这条三天的路线：
 
-- order and encode several timestamped internal keys and translate user range bounds;
-- select visible values and tombstones for multiple read timestamps;
-- explain why an iterator owns its transaction and how the watermark protects one historical version;
-- distinguish atomic visibility, crash atomicity, durability, snapshot visibility, and serializability;
-- place failures through commit and recovery and state exactly what may be visible or durable at each point;
-- construct a point-read write skew that validation rejects and a range phantom it misses;
-- explain why compaction and filters preserve versions above the watermark; and
-- turn a suspected invariant violation into a minimal test or execution trace.
+- 排序并编码多个带时间戳的内部键，并转换用户范围边界；
+- 为多个读时间戳选取可见值与墓碑；
+- 解释为什么迭代器拥有它的事务，以及水位线如何保护一个历史版本；
+- 区分原子可见性、崩溃原子性、持久性、快照可见性和可串行化；
+- 在提交与恢复过程中放置失败，并准确说明每个点上什么可能可见或已持久化；
+- 构造一个会被校验拒绝的点读写偏斜，以及一个它会漏掉的范围幻影；
+- 解释为什么压缩和过滤器保留水位线之上的版本；以及
+- 把一处疑似的不变量违反转化为最小的测试或执行追踪。
 
-If one item is unclear, return to the corresponding Week 3 chapter and ask the agent for a smaller version stream, crash point, or transaction interleaving. Finishing the code is not enough: you should be able to name the guarantee, find its mechanism, and design evidence that could prove your shared implementation wrong.
+如果有一项不清楚，回到对应的第三周章节，向代理要一个更小的版本流、崩溃点或事务交替执行。仅仅写完代码不够：你应当能够给保证命名、找到它的机制，并设计出能证明你们共同的实现有错的证据。
 
 {{#include copyright.md}}

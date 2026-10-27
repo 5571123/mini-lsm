@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
+#![allow(unused_variables)] // TODO(you): 实现该模块后删除此 lint
+#![allow(dead_code)] // TODO(you): 实现该模块后删除此 lint
 
 use std::sync::Arc;
 
@@ -21,17 +21,17 @@ use crate::key::{KeySlice, KeyVec};
 
 use super::Block;
 
-/// Iterates on a block.
+/// 在块上迭代。
 pub struct BlockIterator {
-    /// The internal `Block`, wrapped by an `Arc`
+    /// 内部的 `Block`，用 `Arc` 包裹
     block: Arc<Block>,
-    /// The current key, empty represents the iterator is invalid
+    /// 当前键，为空表示迭代器无效
     key: KeyVec,
-    /// the current value range in the block.data, corresponds to the current key
+    /// 当前值在 block.data 中的范围，与当前键对应
     value_range: (usize, usize),
-    /// Current index of the key-value pair, should be in range of [0, num_of_elements)
+    /// 当前键值对的下标，应处于 [0, num_of_elements) 范围内
     idx: usize,
-    /// The first key in the block
+    /// 块中的第一个键
     first_key: KeyVec,
 }
 
@@ -46,45 +46,44 @@ impl BlockIterator {
         }
     }
 
-    /// Creates a block iterator and seek to the first entry.
+    /// 创建块迭代器，并定位到第一个条目。
     pub fn create_and_seek_to_first(block: Arc<Block>) -> Self {
         unimplemented!()
     }
 
-    /// Creates a block iterator and seek to the first key that >= `key`.
+    /// 创建块迭代器，并定位到第一个 >= `key` 的键。
     pub fn create_and_seek_to_key(block: Arc<Block>, key: KeySlice) -> Self {
         unimplemented!()
     }
 
-    /// Returns the key of the current entry.
+    /// 返回当前条目的键。
     pub fn key(&self) -> KeySlice<'_> {
         unimplemented!()
     }
 
-    /// Returns the value of the current entry.
+    /// 返回当前条目的值。
     pub fn value(&self) -> &[u8] {
         unimplemented!()
     }
 
-    /// Returns true if the iterator is valid.
-    /// Note: You may want to make use of `key`
+    /// 迭代器有效时返回 true。
+    /// 注意：你可以利用 `key` 来判断
     pub fn is_valid(&self) -> bool {
         unimplemented!()
     }
 
-    /// Seeks to the first key in the block.
+    /// 定位到块中的第一个键。
     pub fn seek_to_first(&mut self) {
         unimplemented!()
     }
 
-    /// Move to the next key in the block.
+    /// 移动到块中的下一个键。
     pub fn next(&mut self) {
         unimplemented!()
     }
 
-    /// Seek to the first key that >= `key`.
-    /// Note: You should assume the key-value pairs in the block are sorted when being added by
-    /// callers.
+    /// 定位到第一个 >= `key` 的键。
+    /// 注意：你应假设调用方追加键值对时已按有序顺序写入。
     pub fn seek_to_key(&mut self, key: KeySlice) {
         unimplemented!()
     }

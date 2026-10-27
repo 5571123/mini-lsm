@@ -23,17 +23,17 @@ use crate::{
 
 use super::Block;
 
-/// Iterates on a block.
+/// 在块（block）上迭代。
 pub struct BlockIterator {
-    /// reference to the block
+    /// 块的引用
     block: Arc<Block>,
-    /// the current key at the iterator position
+    /// 迭代器当前位置的键
     key: KeyVec,
-    /// the current value range in the block.data, corresponds to the current key
+    /// 当前键在 block.data 中对应的值范围
     value_range: (usize, usize),
-    /// the current index at the iterator position
+    /// 迭代器当前位置的下标
     idx: usize,
-    /// the first key in the block
+    /// 块中的第一个键
     first_key: KeyVec,
 }
 
@@ -59,43 +59,43 @@ impl BlockIterator {
         }
     }
 
-    /// Creates a block iterator and seek to the first entry.
+    /// 创建一个块迭代器，并定位到第一个条目。
     pub fn create_and_seek_to_first(block: Arc<Block>) -> Self {
         let mut iter = Self::new(block);
         iter.seek_to_first();
         iter
     }
 
-    /// Creates a block iterator and seek to the first key that >= `key`.
+    /// 创建一个块迭代器，并定位到第一个 >= `key` 的键。
     pub fn create_and_seek_to_key(block: Arc<Block>, key: KeySlice) -> Self {
         let mut iter = Self::new(block);
         iter.seek_to_key(key);
         iter
     }
 
-    /// Returns the key of the current entry.
+    /// 返回当前条目的键。
     pub fn key(&self) -> KeySlice<'_> {
         debug_assert!(!self.key.is_empty(), "invalid iterator");
         self.key.as_key_slice()
     }
 
-    /// Returns the value of the current entry.
+    /// 返回当前条目的值。
     pub fn value(&self) -> &[u8] {
         debug_assert!(!self.key.is_empty(), "invalid iterator");
         &self.block.data[self.value_range.0..self.value_range.1]
     }
 
-    /// Returns true if the iterator is valid.
+    /// 若迭代器有效则返回 true。
     pub fn is_valid(&self) -> bool {
         !self.key.is_empty()
     }
 
-    /// Seeks to the first key in the block.
+    /// 定位到块中的第一个键。
     pub fn seek_to_first(&mut self) {
         self.seek_to(0);
     }
 
-    /// Seeks to the idx-th key in the block.
+    /// 定位到块中第 idx 个键。
     fn seek_to(&mut self, idx: usize) {
         if idx >= self.block.offsets.len() {
             self.key.clear();
@@ -107,18 +107,18 @@ impl BlockIterator {
         self.idx = idx;
     }
 
-    /// Move to the next key in the block.
+    /// 移动到块中的下一个键。
     pub fn next(&mut self) {
         self.idx += 1;
         self.seek_to(self.idx);
     }
 
-    /// Seek to the specified position and update the current `key` and `value`
-    /// Index update will be handled by caller
+    /// 定位到指定位置，并更新当前的 `key` 与 `value`
+    /// 下标由调用方负责更新
     fn seek_to_offset(&mut self, offset: usize) {
         let mut entry = &self.block.data[offset..];
-        // Since `get_u16()` will automatically move the ptr 2 bytes ahead here,
-        // we don't need to manually advance it
+        // 这里的 `get_u16()` 会自动把指针向前移动 2 字节，
+        // 因此不需要手动前移
         let overlap_len = entry.get_u16() as usize;
         let key_len = entry.get_u16() as usize;
         let key = &entry[..key_len];
@@ -129,7 +129,7 @@ impl BlockIterator {
         let ts = entry.get_u64();
         self.key.set_ts(ts);
         let value_len = entry.get_u16() as usize;
-        // REMEMBER TO CHANGE THIS every time you change the encoding!
+        // 每次修改编码格式时都要记得修改这里！
         let value_offset_begin =
             offset + SIZEOF_U16 + SIZEOF_U16 + std::mem::size_of::<u64>() + key_len + SIZEOF_U16;
         let value_offset_end = value_offset_begin + value_len;
@@ -137,7 +137,7 @@ impl BlockIterator {
         entry.advance(value_len);
     }
 
-    /// Seek to the first key that is >= `key`.
+    /// 定位到第一个 >= `key` 的键。
     pub fn seek_to_key(&mut self, key: KeySlice) {
         let mut low = 0;
         let mut high = self.block.offsets.len();

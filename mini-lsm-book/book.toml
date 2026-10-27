@@ -1,9 +1,9 @@
 [book]
 authors = ["Alex Chi Z"]
-language = "en"
+language = "zh-CN"
 src = "src"
-title = "Mini-LSM — Build a Database Storage Engine in Rust"
-description = "A hands-on introduction to database internals. Build an LSM storage engine with SSTables, compaction, WAL recovery, MVCC, and transactions."
+title = "Mini-LSM —— 用 Rust 构建数据库存储引擎"
+description = "数据库内核动手实践：从 SSTable、压缩、WAL 恢复到 MVCC 与事务，一步步实现一个 LSM 存储引擎。"
 
 [preprocessor.toc]
 command = "mdbook-toc"

@@ -40,7 +40,7 @@ pub struct Transaction {
     pub(crate) inner: Arc<LsmStorageInner>,
     pub(crate) local_storage: Arc<SkipMap<Bytes, Bytes>>,
     pub(crate) committed: Arc<AtomicBool>,
-    /// Write set and read set
+    /// 写集合与读集合
     pub(crate) key_hashes: Option<Mutex<(HashSet<u32>, HashSet<u32>)>>,
 }
 
@@ -168,7 +168,7 @@ impl Transaction {
             );
             assert!(old_data.is_none());
 
-            // remove unneeded txn data
+            // 清理不再需要的事务数据
             let watermark = self.inner.mvcc().watermark();
             while let Some(entry) = committed_txns.first_entry() {
                 if *entry.key() < watermark {
@@ -193,13 +193,13 @@ type SkipMapRangeIter<'a> =
 
 #[self_referencing]
 pub struct TxnLocalIterator {
-    /// Stores a reference to the skipmap.
+    /// 保存 skipmap 的引用。
     map: Arc<SkipMap<Bytes, Bytes>>,
-    /// Stores a skipmap iterator that refers to the lifetime of `TxnLocalIterator` itself.
+    /// 保存一个指向 `TxnLocalIterator` 自身生命周期的 skipmap 迭代器。
     #[borrows(map)]
     #[not_covariant]
     iter: SkipMapRangeIter<'this>,
-    /// Stores the current key-value pair.
+    /// 保存当前的键值对。
     item: (Bytes, Bytes),
 }
 

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
+#![allow(unused_variables)] // TODO(you): 实现该模块后删除此 lint
+#![allow(dead_code)] // TODO(you): 实现该模块后删除此 lint
 
 use std::ops::Bound;
 use std::path::Path;
@@ -30,10 +30,10 @@ use crate::key::KeySlice;
 use crate::table::SsTableBuilder;
 use crate::wal::Wal;
 
-/// A basic mem-table based on crossbeam-skiplist.
+/// 基于 crossbeam-skiplist 的基础内存表（memtable）。
 ///
-/// An initial implementation of memtable is part of week 1, day 1. It will be incrementally implemented in other
-/// chapters of week 1 and week 2.
+/// 内存表的初始实现属于 week 1, day 1，并会在 week 1 和 week 2 的其他章节中
+/// 逐步实现。
 pub struct MemTable {
     map: Arc<SkipMap<Bytes, Bytes>>,
     wal: Option<Wal>,
@@ -41,7 +41,7 @@ pub struct MemTable {
     approximate_size: Arc<AtomicUsize>,
 }
 
-/// Create a bound of `Bytes` from a bound of `&[u8]`.
+/// 根据 `&[u8]` 的 bound 创建 `Bytes` 的 bound。
 pub(crate) fn map_bound(bound: Bound<&[u8]>) -> Bound<Bytes> {
     match bound {
         Bound::Included(x) => Bound::Included(Bytes::copy_from_slice(x)),
@@ -51,17 +51,17 @@ pub(crate) fn map_bound(bound: Bound<&[u8]>) -> Bound<Bytes> {
 }
 
 impl MemTable {
-    /// Week 1 Day 1: create the plain in-memory memtable.
+    /// Week 1 Day 1：创建纯内存的内存表。
     pub fn create(_id: usize) -> Self {
         unimplemented!()
     }
 
-    /// Week 2 Day 6: create a memtable backed by a write-ahead log.
+    /// Week 2 Day 6：创建由预写日志（WAL）支撑的内存表。
     pub fn create_with_wal(_id: usize, _path: impl AsRef<Path>) -> Result<Self> {
         unimplemented!()
     }
 
-    /// Week 2 Day 6: recover a memtable from its write-ahead log.
+    /// Week 2 Day 6：从预写日志中恢复内存表。
     pub fn recover_from_wal(_id: usize, _path: impl AsRef<Path>) -> Result<Self> {
         unimplemented!()
     }
@@ -79,27 +79,27 @@ impl MemTable {
         lower: Bound<&[u8]>,
         upper: Bound<&[u8]>,
     ) -> MemTableIterator {
-        // This function is only used in week 1 tests, so during the week 3 key-ts refactor, you do
-        // not need to consider the bound exclude/include logic. Simply provide `DEFAULT_TS` as the
-        // timestamp for the key-ts pair.
+        // 该函数只用于 week 1 的测试，所以在 week 3 的 key-ts 重构中，你不需要
+        // 考虑 bound 的排除/包含逻辑。直接给 key-ts 对提供 `DEFAULT_TS` 作为
+        // 时间戳即可。
         self.scan(lower, upper)
     }
 
-    /// Week 1 Day 1: get a value by key.
+    /// Week 1 Day 1：按键取值。
     pub fn get(&self, _key: &[u8]) -> Option<Bytes> {
         unimplemented!()
     }
 
-    /// Put a key-value pair into the memtable.
+    /// 把一个键值对写入内存表。
     ///
-    /// Week 1 Day 1: put the key-value pair into the in-memory map.
-    /// Week 2 Day 6: also append the data to the write-ahead log.
-    /// Week 3 Day 5: route the write through the batch WAL implementation.
+    /// Week 1 Day 1：把键值对写入内存中的 map。
+    /// Week 2 Day 6：同时把数据追加到预写日志。
+    /// Week 3 Day 5：让写操作走批量 WAL 实现。
     pub fn put(&self, _key: &[u8], _value: &[u8]) -> Result<()> {
         unimplemented!()
     }
 
-    /// Week 3 Day 5: put a batch of key-value pairs.
+    /// Week 3 Day 5：批量写入一批键值对。
     pub fn put_batch(&self, _data: &[(KeySlice, &[u8])]) -> Result<()> {
         unimplemented!()
     }
@@ -111,12 +111,12 @@ impl MemTable {
         Ok(())
     }
 
-    /// Get an iterator over a range of keys.
+    /// 获取某个键区间上的迭代器。
     pub fn scan(&self, _lower: Bound<&[u8]>, _upper: Bound<&[u8]>) -> MemTableIterator {
         unimplemented!()
     }
 
-    /// Flush the mem-table to SSTable. Implement in week 1 day 6.
+    /// 把内存表落盘为 SSTable，在 week 1 day 6 实现。
     pub fn flush(&self, _builder: &mut SsTableBuilder) -> Result<()> {
         unimplemented!()
     }
@@ -130,7 +130,7 @@ impl MemTable {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// Only use this function when closing the database
+    /// 只在关闭数据库时使用该函数
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
@@ -139,19 +139,19 @@ impl MemTable {
 type SkipMapRangeIter<'a> =
     crossbeam_skiplist::map::Range<'a, Bytes, (Bound<Bytes>, Bound<Bytes>), Bytes, Bytes>;
 
-/// An iterator over a range of `SkipMap`. This is a self-referential structure and please refer to week 1, day 2
-/// chapter for more information.
+/// `SkipMap` 某个区间上的迭代器。这是自引用结构，更多信息请参考 week 1, day 2
+/// 章节。
 ///
-/// This is part of week 1, day 2.
+/// 这是 week 1, day 2 的一部分。
 #[self_referencing]
 pub struct MemTableIterator {
-    /// Stores a reference to the skipmap.
+    /// 保存对 skipmap 的引用。
     map: Arc<SkipMap<Bytes, Bytes>>,
-    /// Stores a skipmap iterator that refers to the lifetime of `MemTableIterator` itself.
+    /// 保存一个 skipmap 迭代器，它引用 `MemTableIterator` 自身的生命周期。
     #[borrows(map)]
     #[not_covariant]
     iter: SkipMapRangeIter<'this>,
-    /// Stores the current key-value pair.
+    /// 保存当前的键值对。
     item: (Bytes, Bytes),
 }
 

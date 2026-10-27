@@ -21,7 +21,7 @@ use crate::block::BlockIterator;
 use crate::iterators::StorageIterator;
 use crate::key::KeySlice;
 
-/// An iterator over the contents of an SSTable.
+/// 遍历 SSTable 内容的迭代器。
 pub struct SsTableIterator {
     table: Arc<SsTable>,
     blk_iter: BlockIterator,
@@ -36,7 +36,7 @@ impl SsTableIterator {
         ))
     }
 
-    /// Create a new iterator and seek to the first key-value pair.
+    /// 创建一个新的迭代器，并定位到第一个键值对。
     pub fn create_and_seek_to_first(table: Arc<SsTable>) -> Result<Self> {
         let (blk_idx, blk_iter) = Self::seek_to_first_inner(&table)?;
         let iter = Self {
@@ -47,7 +47,7 @@ impl SsTableIterator {
         Ok(iter)
     }
 
-    /// Seek to the first key-value pair.
+    /// 定位到第一个键值对。
     pub fn seek_to_first(&mut self) -> Result<()> {
         let (blk_idx, blk_iter) = Self::seek_to_first_inner(&self.table)?;
         self.blk_idx = blk_idx;
@@ -69,7 +69,7 @@ impl SsTableIterator {
         Ok((blk_idx, blk_iter))
     }
 
-    /// Create a new iterator and seek to the first key-value pair which >= `key`.
+    /// 创建一个新的迭代器，并定位到第一个大于等于 `key` 的键值对。
     pub fn create_and_seek_to_key(table: Arc<SsTable>, key: KeySlice) -> Result<Self> {
         let (blk_idx, blk_iter) = Self::seek_to_key_inner(&table, key)?;
         let iter = Self {
@@ -80,7 +80,7 @@ impl SsTableIterator {
         Ok(iter)
     }
 
-    /// Seek to the first key-value pair which >= `key`.
+    /// 定位到第一个大于等于 `key` 的键值对。
     pub fn seek_to_key(&mut self, key: KeySlice) -> Result<()> {
         let (blk_idx, blk_iter) = Self::seek_to_key_inner(&self.table, key)?;
         self.blk_iter = blk_iter;

@@ -21,19 +21,19 @@ pub trait StorageIterator {
     where
         Self: 'a;
 
-    /// Get the current value.
+    /// 获取当前值。
     fn value(&self) -> &[u8];
 
-    /// Get the current key.
+    /// 获取当前键。
     fn key(&self) -> Self::KeyType<'_>;
 
-    /// Check if the current iterator is valid.
+    /// 检查当前迭代器是否有效。
     fn is_valid(&self) -> bool;
 
-    /// Move to the next position.
+    /// 移动到下一个位置。
     fn next(&mut self) -> anyhow::Result<()>;
 
-    /// Number of underlying active iterators for this iterator.
+    /// 该迭代器底层活跃的迭代器数量。
     fn num_active_iterators(&self) -> usize {
         1
     }

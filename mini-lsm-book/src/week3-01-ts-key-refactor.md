@@ -2,15 +2,15 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Timestamp Key Encoding + Refactor
+# 时间戳键编码与重构
 
-By the end of this chapter, you will be able to:
+本章结束时，你将能够：
 
-* Encode a `(user_key, timestamp)` internal key in blocks and SST metadata.
-* Preserve the order `user_key ascending, timestamp descending` through every storage iterator.
-* Explain why Bloom filters hash only the user-key portion and why key-range checks ignore timestamps.
+* 在块和 SST 元数据中编码 `(user_key, timestamp)` 内部键。
+* 在每个存储迭代器中保持 `user_key ascending, timestamp descending`（用户键升序、时间戳降序）的顺序。
+* 解释为什么布隆过滤器只哈希用户键部分，以及为什么键范围检查忽略时间戳。
 
-To copy and run the test cases:
+复制并运行测试用例：
 
 ```
 cargo x copy-test --week 3 --day 1
@@ -18,143 +18,142 @@ cargo test -p mini-lsm-starter --lib week1_day
 cargo test -p mini-lsm-starter --lib week3_day1
 ```
 
-The MVCC subsystem is not complete until Day 2. At the end of this chapter, the Week 1 and Week 3 Day 1 tests are the
-focused green gate. Do not use the complete historical suite yet: Week 2 compaction still uses pre-MVCC assumptions.
+MVCC 子系统要到第二天才算完整。在本章结束时，第一周测试和第三周第一天的测试是重点关注的通过门槛。暂时不要运行完整的历史测试套件：第二周的压缩仍然使用 MVCC 之前的假设。
 
-## Before You Begin
+## 开始之前
 
-This chapter changes representation, not visibility. Every existing layer that stores, compares, seeks, or summarizes keys must agree on the same internal ordering.
+本章改变的是表示方式，而不是可见性。每一个存储、比较、查找或汇总键的现有层次，都必须认同同一种内部顺序。
 
-Keep these invariants in mind:
+请记住这些不变量：
 
-1. Internal keys sort by user key in ascending order and timestamp in descending order.
-2. Prefix compression applies only to user-key bytes. The timestamp is encoded in full for every entry.
-3. Block metadata stores complete first and last internal keys, including their timestamps.
-4. Bloom filters hash user-key bytes only, because a lookup asks whether any version of that user key may exist.
-5. Day 1 still writes `TS_DEFAULT`; seeing multiple versions through `LsmIterator` is temporarily acceptable until Day 2.
+1. 内部键按用户键升序、时间戳降序排序。
+2. 前缀压缩只作用于用户键字节。每个条目都完整编码时间戳。
+3. 块元数据存储完整的第一和最后一个内部键，包括它们的时间戳。
+4. 布隆过滤器只哈希用户键字节，因为一次查找询问的是该用户键的任意版本是否存在。
+5. 第一天仍然写入 `TS_DEFAULT`；在第二天之前，通过 `LsmIterator` 看到多个版本是暂时可以接受的。
 
-> **Predict before coding:** In what order should `a@7`, `a@3`, `aa@9`, and `b@1` appear? If a block entry shares all user-key bytes with the previous entry, which fields are still encoded for that entry?
+> **先预测再写代码：** `a@7`、`a@3`、`aa@9` 和 `b@1` 应当以什么顺序出现？如果一个块条目与上一个条目共享全部用户键字节，该条目仍然会编码哪些字段？
 
-## Task 0: Use MVCC Key Encoding
+## 任务 0：使用 MVCC 键编码
 
-You will need to replace the key encoding module to the MVCC one. We have removed some interfaces from the original key module and implemented new comparators for the keys. If you followed the instructions in the previous chapters and did not use `into_inner` on the key, you should pass all test cases on day 3 after all the refactors. Otherwise, you will need to look carefully on the places where you only compare the keys without looking at the timestamps.
+你需要把键编码模块替换为 MVCC 版本。我们从原来的键模块中删除了一些接口，并为键实现了新的比较器。如果你遵循了前几章的说明，并且没有对键使用 `into_inner`，那么在所有重构完成后，你应当能通过第三天的全部测试用例。否则，你需要仔细检查那些只比较键、不看时间戳的地方。
 
-Specifically, the key type definition has been changed from:
+具体来说，键的类型定义已经从：
 
 ```rust,no_run
 pub struct Key<T: AsRef<[u8]>>(T);
 ```
 
-...to:
+变成：
 
 ```rust,no_run
-pub struct Key<T: AsRef<[u8]>>(T /* user key */, u64 /* timestamp */);
+pub struct Key<T: AsRef<[u8]>>(T /* 用户键 */, u64 /* 时间戳 */);
 ```
 
-...where we have a timestamp associated with the keys. We only use this key representation internally in the system. On the user interface side, we do not ask users to provide a timestamp, and therefore some structures still use `&[u8]` instead of `KeySlice` in the engine. We will cover the places where we need to change the signature of the functions later. For now, you only need to run,
+...其中键带有一个时间戳。我们只在系统内部使用这种键表示。在用户接口一侧，我们不要求用户提供时间戳，因此引擎中一些结构仍然使用 `&[u8]` 而不是 `KeySlice`。需要修改函数签名的地方，我们会在后面讲到。现在你只需要运行：
 
 ```
 cp mini-lsm-mvcc/src/key.rs mini-lsm-starter/src/
 ```
 
-There are other ways of storing the timestamp. For example, we can still use the `pub struct Key<T: AsRef<[u8]>>(T);` representation, but assume the last 8 bytes of the key is the timestamp. You can also implement this as part of the bonus tasks.
+还有其他存储时间戳的方式。例如，我们可以仍然使用 `pub struct Key<T: AsRef<[u8]>>(T);` 这种表示，但假定键的最后 8 个字节是时间戳。你也可以把它作为加分任务实现。
 
 ```plaintext
-Alternative key representation: | user_key (varlen) | ts (8 bytes) | in a single slice
-Our key representation: | user_key slice | ts (u64) |
+另一种键表示：| user_key（变长） | ts（8 字节） | 放在同一个切片中
+我们的键表示：| user_key 切片 | ts（u64） |
 ```
 
-In the key+timestamp ordering, the smallest user key appears first, and the largest timestamp for one user key appears first. For example:
+在键 + 时间戳的顺序中，最小的用户键排在最前，同一个用户键最大的时间戳排在最前。例如：
 
 ```
 ("a", 233) < ("a", 0) < ("b", 233) < ("b", 0)
 ```
 
-The descending timestamp order makes snapshot lookup a lower-bound seek. Seeking to `(a, read_ts)` skips `a` versions newer than the snapshot and lands on the greatest timestamp less than or equal to `read_ts`, if one exists. All remaining versions of `a` are adjacent, so the iterator can choose one visible version and then skip the rest. Keeping user keys in ascending order preserves ordinary range-scan order.
+时间戳降序让快照查找变成一次下界查找。查找 `(a, read_ts)` 会跳过比快照更新的 `a` 版本，落在小于或等于 `read_ts` 的最大时间戳上（如果存在）。`a` 的其余版本彼此相邻，因此迭代器可以选出一个可见版本，然后跳过其余的版本。用户键保持升序，则保留了普通范围扫描的顺序。
 
-## Task 1: Encode Timestamps in Blocks
+## 任务 1：在块中编码时间戳
 
-Replacing the key module makes representation assumptions visible as compiler errors. In this task, update:
+替换键模块会让对表示的假设以编译错误的形式暴露出来。在这个任务中，修改：
 
 ```
 src/block/builder.rs
 src/block/iterator.rs
 ```
 
-`raw_ref()` and `len()` are removed from the key API. Use `key_ref()` for user-key bytes and `key_len()` for their length. Update the block builder and decoder to encode the timestamp explicitly. The new block entry is:
+`raw_ref()` 和 `len()` 已从键 API 中删除。用 `key_ref()` 获取用户键字节，用 `key_len()` 获取其长度。修改块构建器和解码器，显式编码时间戳。新的块条目是：
 
 
 ```
 key_overlap_len (u16) | remaining_key_len (u16) | key (remaining_key_len) | timestamp (u64)
 ```
 
-Use `raw_len()` to estimate the space required by the complete internal key, and store the timestamp after the remaining user-key bytes.
+用 `raw_len()` 估算完整内部键所需的空间，并把时间戳存放在剩余用户键字节之后。
 
-After you change the block encoding, update the block iterator to decode and reconstruct timestamped keys accordingly.
+修改块编码之后，相应地更新块迭代器，解码并重建带时间戳的键。
 
-## Task 2: Encoding Timestamps in SSTs
+## 任务 2：在 SST 中编码时间戳
 
-Then, you can go ahead and modify the table format,
+接下来，你可以继续修改表格式：
 
 ```
 src/table.rs
 src/table/builder.rs
 ```
 
-Change block metadata encoding to include the timestamps of its first and last keys. Because `seek` and `add` accept `KeySlice`, the key comparator then carries the same ordering into SST construction and lookup.
+修改块元数据编码，使其包含首尾两个键的时间戳。由于 `seek` 和 `add` 接受 `KeySlice`，键比较器会把同样的顺序带入 SST 构建和查找。
 
-Use `key_ref()` to build the Bloom filter. All timestamped versions of one user key then share one fingerprint.
+用 `key_ref()` 构建布隆过滤器。这样同一个用户键的所有带时间戳版本就共享一个指纹。
 
-## Task 3: LSM Iterators
+## 任务 3：LSM 迭代器
 
-As we use associated generic type to make most of our iterators work for different key types (i.e., `&[u8]` and `KeySlice<'_>`), we do not need to modify merge iterators and concat iterators if they are implemented correctly. The `LsmIterator` is the place where we strip the timestamp from the internal key representation and return the latest version of a key to the user. In this task, you will need to modify:
+由于我们使用关联泛型类型，让大多数迭代器同时适用于不同的键类型（即 `&[u8]` 和 `KeySlice<'_>`），归并迭代器和拼接迭代器如果实现正确，就不需要修改。`LsmIterator` 是这样一个地方：从内部键表示中去掉时间戳，并把某个键的最新版本返回给用户。在这个任务中，你需要修改：
 
 ```
 src/lsm_iterator.rs
 ```
 
-For now, we do not modify the logic of `LsmIterator` to only keep the latest version of a key. We simply make it compile by appending a timestamp to the user key when passing the key to the inner iterator, and stripping the timestamp from a key when returning to the user. The behavior of your LSM iterator for now should be returning multiple versions of the same key to the user.
+目前我们还不修改 `LsmIterator` 的逻辑去只保留一个键的最新版本。我们只是让它可以编译：在把键传给内层迭代器时给用户键追加一个时间戳，在返回用户时去掉键中的时间戳。此时你的 LSM 迭代器的行为应当是把同一个键的多个版本返回给用户。
 
-## Task 4: Memtable
+## 任务 4：内存表
 
-For now, we keep the logic of the memtable. We return a key slice to the user and flush SSTs with `TS_DEFAULT`. We will change the memtable to be MVCC in the next chapter. In this task, you will need to modify:
+目前我们保持内存表的逻辑不变。我们向用户返回键切片，并用 `TS_DEFAULT` 落盘 SST。下一章我们会把内存表改成 MVCC 的。在这个任务中，你需要修改：
 
 ```
 src/mem_table.rs
 ```
 
-## Task 5: Engine Read Path
+## 任务 5：引擎读路径
 
-In this task, you will need to modify,
+在这个任务中，你需要修改：
 
 ```
 src/lsm_storage.rs
 ```
 
-Now that we have a timestamp in the key, and when creating the iterators, we will need to seek a key with a timestamp instead of only the user key. You can create a key slice with `TS_RANGE_BEGIN`, which is the largest ts.
+现在键中带有时间戳，创建迭代器时，我们需要用带时间戳的键来查找，而不只是用户键。你可以用 `TS_RANGE_BEGIN` 创建一个键切片，它是最高的 ts。
 
-When you check if a user key is in a table, you can simply compare the user key without comparing the timestamp.
+当你检查某个用户键是否在一张表中时，只需比较用户键，不必比较时间戳。
 
-At this point, all stored keys still use `TS_DEFAULT` (timestamp 0). The next two chapters assign real commit timestamps and select versions by read timestamp.
+此时，所有存储的键仍然使用 `TS_DEFAULT`（时间戳 0）。接下来的两章会分配真正的提交时间戳，并按读时间戳选取版本。
 
-## Chapter Checkpoint
+## 本章检查点
 
-Your engine should encode and decode timestamped keys without changing Day 1 visibility semantics.
+你的引擎应当能够编码和解码带时间戳的键，同时不改变第一天的可见性语义。
 
-Verify these cases explicitly:
+请显式验证这些情况：
 
-1. Round-trip two entries with the same user key and different timestamps through a block and an SST.
-2. Seek to a timestamp between two versions and confirm that descending timestamp order positions the iterator correctly.
-3. Confirm that two versions of one user key add the same Bloom-filter fingerprint.
+1. 让两个具有相同用户键、不同时间戳的条目经过一个块和一张 SST，完成一次往返。
+2. 查找两个版本之间的一个时间戳，确认时间戳降序让迭代器定位到正确位置。
+3. 确认同一个用户键的两个版本产生相同的布隆过滤器指纹。
 
-## Test Your Understanding
+## 检验你的理解
 
-* Why is timestamp order reversed while user-key order is not?
-* Which encoded structures would become inconsistent if block metadata omitted timestamps?
-* Why should a point lookup for `k` test one user-key fingerprint rather than a separate fingerprint for every possible `k@ts`?
-* During Day 1, why is it acceptable for `LsmIterator` to return repeated user keys, and why must that behavior change on Day 2?
-* Construct a seek target that distinguishes comparing full internal keys from comparing only user keys.
+* 为什么时间戳的顺序是反的，而用户键的顺序不是？
+* 如果块元数据省略时间戳，哪些已编码的结构会变得不一致？
+* 为什么对 `k` 的点查应当检查一个用户键指纹，而不是为每个可能的 `k@ts` 分别建立指纹？
+* 在第一天，为什么 `LsmIterator` 返回重复的用户键是可以接受的，而这个行为为什么必须在第二天改变？
+* 构造一个查找目标，使它能够区分「比较完整的内部键」与「只比较用户键」。
 
-Use the [Week 3 end-of-week self-check](./week3-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs. You can also discuss them in the Discord community.
+用[第三周周末自检](./week3-overview.md#end-of-week-self-check)来校准核心不变量。其余的设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载与假设。你也可以在 Discord 社区中讨论它们。
 
 {{#include copyright.md}}

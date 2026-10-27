@@ -2,16 +2,16 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Leveled Compaction (Deprecated)
+# Leveled 压缩（已废弃）
 
 <div class="warning">
 
-This unfinished Mini-LSM v1 chapter is no longer maintained. The current course expands the material into:
+这个未完成的 Mini-LSM v1 章节已不再维护。当前课程把内容扩展到以下章节：
 
-- [Week 2: Compaction Implementation](./week2-01-compaction.md)
-- [Week 2: Simple Compaction Strategy](./week2-02-simple.md)
-- [Week 2: Tiered Compaction Strategy](./week2-03-tiered.md)
-- [Week 2: Leveled Compaction Strategy](./week2-04-leveled.md)
+- [第二周：压缩实现](./week2-01-compaction.md)
+- [第二周：简单压缩策略](./week2-02-simple.md)
+- [第二周：Tiered 压缩策略](./week2-03-tiered.md)
+- [第二周：Leveled 压缩策略](./week2-04-leveled.md)
 
 </div>
 

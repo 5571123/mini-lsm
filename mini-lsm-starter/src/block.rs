@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
+#![allow(unused_variables)] // TODO(you): 实现该模块后删除此 lint
+#![allow(dead_code)] // TODO(you): 实现该模块后删除此 lint
 
 mod builder;
 mod iterator;
@@ -22,20 +22,20 @@ pub use builder::BlockBuilder;
 use bytes::Bytes;
 pub use iterator::BlockIterator;
 
-/// A block is the smallest unit of read and caching in LSM tree. It is a collection of sorted key-value pairs.
+/// 块（block）是 LSM tree 中读取和缓存的最小单位，是一批有序的键值对。
 pub struct Block {
     pub(crate) data: Vec<u8>,
     pub(crate) offsets: Vec<u16>,
 }
 
 impl Block {
-    /// Encode the internal data to the data layout illustrated in the course
-    /// Note: You may want to recheck if any of the expected field is missing from your output
+    /// 把内部数据编码成课程中给出的数据布局
+    /// 注意：你需要复查输出中是否漏掉了某个应有的字段
     pub fn encode(&self) -> Bytes {
         unimplemented!()
     }
 
-    /// Decode from the data layout, transform the input `data` to a single `Block`
+    /// 按数据布局解码，把输入的 `data` 转换成单个 `Block`
     pub fn decode(data: &[u8]) -> Self {
         unimplemented!()
     }

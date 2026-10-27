@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
+#![allow(unused_variables)] // TODO(you): 实现该模块后删除此 lint
+#![allow(dead_code)] // TODO(you): 实现该模块后删除此 lint
 
 use std::sync::Arc;
 
@@ -25,8 +25,8 @@ use crate::{
     table::{SsTable, SsTableIterator},
 };
 
-/// Concat multiple iterators ordered in key order and their key ranges do not overlap. We do not want to create the
-/// iterators when initializing this iterator to reduce the overhead of seeking.
+/// 拼接多个按键有序、且键范围互不重叠的迭代器。为了减少定位开销，
+/// 我们不在初始化该迭代器时创建这些迭代器。
 pub struct SstConcatIterator {
     current: Option<SsTableIterator>,
     next_sst_idx: usize,

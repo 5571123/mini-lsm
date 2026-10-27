@@ -17,11 +17,11 @@
 use anyhow::Result;
 use bytes::{BufMut, Bytes, BytesMut};
 
-/// Implements a bloom filter
+/// 实现一个布隆过滤器
 pub struct Bloom {
-    /// data of filter in bits
+    /// 过滤器的数据，按位存储
     pub(crate) filter: Bytes,
-    /// number of hash functions
+    /// 哈希函数的个数
     pub(crate) k: u8,
 }
 
@@ -59,7 +59,7 @@ impl<T: AsMut<[u8]>> BitSliceMut for T {
 }
 
 impl Bloom {
-    /// Decode a bloom filter
+    /// 解码一个布隆过滤器
     pub fn decode(buf: &[u8]) -> Result<Self> {
         let filter = &buf[..buf.len() - 1];
         let k = buf[buf.len() - 1];
@@ -69,20 +69,20 @@ impl Bloom {
         })
     }
 
-    /// Encode a bloom filter
+    /// 编码一个布隆过滤器
     pub fn encode(&self, buf: &mut Vec<u8>) {
         buf.extend(&self.filter);
         buf.put_u8(self.k);
     }
 
-    /// Get bloom filter bits per key from entries count and FPR
+    /// 根据条目数量和 FPR 计算每个键对应的布隆过滤器位数
     pub fn bloom_bits_per_key(entries: usize, false_positive_rate: f64) -> usize {
         let size = -(entries as f64) * false_positive_rate.ln() / std::f64::consts::LN_2.powi(2);
         let locs = (size / (entries as f64)).ceil();
         locs as usize
     }
 
-    /// Build bloom filter from key hashes
+    /// 根据键的哈希值构建布隆过滤器
     pub fn build_from_key_hashes(keys: &[u32], bits_per_key: usize) -> Self {
         let k = (bits_per_key as f64 * 0.69) as u32;
         let k = k.clamp(1, 30);
@@ -92,7 +92,7 @@ impl Bloom {
         let mut filter = BytesMut::with_capacity(nbytes);
         filter.resize(nbytes, 0);
 
-        // TODO: build the bloom filter
+        // TODO: 构建布隆过滤器
 
         Self {
             filter: filter.freeze(),
@@ -100,16 +100,16 @@ impl Bloom {
         }
     }
 
-    /// Check if a bloom filter may contain some data
+    /// 检查布隆过滤器是否可能包含某个数据
     pub fn may_contain(&self, h: u32) -> bool {
         if self.k > 30 {
-            // potential new encoding for short bloom filters
+            // 短布隆过滤器可能采用的新编码
             true
         } else {
             let nbits = self.filter.bit_len();
             let delta = h.rotate_left(15);
 
-            // TODO: probe the bloom filter
+            // TODO: 探测布隆过滤器
 
             true
         }

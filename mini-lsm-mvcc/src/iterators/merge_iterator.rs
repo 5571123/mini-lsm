@@ -48,8 +48,8 @@ impl<I: StorageIterator> Ord for HeapWrapper<I> {
     }
 }
 
-/// Merge multiple iterators of the same type. If the same key occurs multiple times in some
-/// iterators, prefer the one with smaller index.
+/// 归并多个同类型的迭代器。如果同一个键在多个迭代器中重复出现，
+/// 优先取下标较小的那个。
 pub struct MergeIterator<I: StorageIterator> {
     iters: BinaryHeap<HeapWrapper<I>>,
     current: Option<HeapWrapper<I>>,
@@ -67,7 +67,7 @@ impl<I: StorageIterator> MergeIterator<I> {
         let mut heap = BinaryHeap::new();
 
         if iters.iter().all(|x| !x.is_valid()) {
-            // All invalid, select the last one as the current.
+            // 全部无效，取最后一个作为 current。
             let mut iters = iters;
             return Self {
                 iters: heap,
@@ -111,20 +111,20 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
 
     fn next(&mut self) -> Result<()> {
         let current = self.current.as_mut().unwrap();
-        // Pop the item out of the heap if they have the same value.
+        // 如果堆中元素的键与当前键相同，就把它从堆中弹出。
         while let Some(mut inner_iter) = self.iters.peek_mut() {
             debug_assert!(
                 inner_iter.1.key() >= current.1.key(),
                 "heap invariant violated"
             );
             if inner_iter.1.key() == current.1.key() {
-                // Case 1: an error occurred when calling `next`.
+                // 情况 1：调用 `next` 时发生错误。
                 if let e @ Err(_) = inner_iter.1.next() {
                     PeekMut::pop(inner_iter);
                     return e;
                 }
 
-                // Case 2: iter is no longer valid.
+                // 情况 2：迭代器不再有效。
                 if !inner_iter.1.is_valid() {
                     PeekMut::pop(inner_iter);
                 }
@@ -135,7 +135,7 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
 
         current.1.next()?;
 
-        // If the current iterator is invalid, pop it out of the heap and select the next one.
+        // 如果当前迭代器无效，就把它从堆中弹出，并选出下一个。
         if !current.1.is_valid() {
             if let Some(iter) = self.iters.pop() {
                 *current = iter;
@@ -143,7 +143,7 @@ impl<I: 'static + for<'a> StorageIterator<KeyType<'a> = KeySlice<'a>>> StorageIt
             return Ok(());
         }
 
-        // Otherwise, compare with heap top and swap if necessary.
+        // 否则与堆顶比较，必要时交换。
         if let Some(mut inner_iter) = self.iters.peek_mut()
             && *current < *inner_iter
         {

@@ -2,71 +2,71 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Day 1 - Build the Storage Engine
+# 第 1 天：构建存储引擎
 
-This is the first day of [Mini-LSM with Coding Agents](./agent-fast-forward-overview.md). You will use a coding agent to build, test, and explain one working storage engine from the original Mini-LSM material:
+这是 [Mini-LSM with Coding Agents](./agent-fast-forward-overview.md) 的第一天。你将使用编码智能体，基于原始 Mini-LSM 材料构建、测试并讲解一个可工作的存储引擎：
 
 ```text
 put/delete -> mutable memtable -> immutable memtables -> L0 SSTs
                      \____________ read + merge ____________/
 ```
 
-You decide behavior that affects correctness or the design; the agent handles mechanical implementation. A short request begins a guided dialogue, not a complete implementation in one turn.
+影响正确性或设计的行为由你决定；机械性的实现交给智能体。一段简短的请求开启的是一段有引导的对话，而不是一轮就完成的实现。
 
-## What You Will Finish
+## 你将完成什么
 
-At the end of this path:
+走完这条路径后：
 
-- `put`, `delete`, `get`, and bounded `scan` work across memory and disk;
-- a frozen memtable can be flushed into an L0 SST;
-- Bloom filters and prefix encoding improve the implementation without changing its results;
-- the complete supplied test suite passes; and
-- you can trace a key through the engine, explain why the newest value wins, and design a test for a plausible bug.
+- `put`、`delete`、`get` 和有界 `scan` 在内存与磁盘上都能工作；
+- 冻结的内存表可以落盘为 L0 SSTable；
+- 布隆过滤器和前缀编码在不改变结果的前提下改进实现；
+- 提供的完整测试集全部通过；并且
+- 你能追踪一个键在引擎中的路径，解释为什么最新的值胜出，并为一种可能的 bug 设计测试。
 
-The tests are evidence, not the specification. Generated code remains untrusted until you can connect it to a decision and an invariant and try to falsify it.
+测试是证据，不是规格说明。生成的代码在你能够把它关联到某个决策和某条不变量、并尝试证伪它之前，始终是不可信的。
 
-## Begin Without the Supplied Tests
+## 先不要使用提供的测试
 
-Complete the repository and agent preparation in the [track overview](./agent-fast-forward-overview.md#prepare-the-repository-and-the-agent). Leave the agent at the instruction-handshake stop. From the repository root, verify that the untouched starter compiles without copying any supplied tests:
+在[路径总览](./agent-fast-forward-overview.md#prepare-the-repository-and-the-agent)中完成仓库和智能体的准备工作。让智能体停在指令握手处。在仓库根目录确认未经改动的起始代码可以编译，且不复制任何提供的测试：
 
 ```shell
 cargo check -p mini-lsm-starter --lib
 ```
 
-Do not run `cargo x copy-test --week 1` yet. Each checkpoint begins from the book, starter interfaces, and your accepted decisions. Only after the checkpoint has a compiling first-pass implementation should you reveal its test modules. This gives the tests an independent role: they challenge the implementation instead of quietly specifying it assertion by assertion.
+此时不要运行 `cargo x copy-test --week 1`。每个检查点都从教材、起始接口和你已确认的决策出发。只有当检查点有了能编译的第一版实现之后，才展示它的测试模块。这样测试才有独立的作用：它们挑战实现，而不是用一条条断言悄悄规定实现。
 
-## Start Day 1
+## 开始第 1 天
 
-With the agent running from `mini-lsm-starter`, the instruction handshake complete, and the supplied tests still unrevealed, send:
+在智能体从 `mini-lsm-starter` 运行、指令握手完成、提供的测试仍未展示的情况下，发送：
 
-> Build Day 1 with me, starting with ordered in-memory state. Follow the student-owned design protocol in `AGENTS.md` and never access `../mini-lsm` or `../mini-lsm-mvcc`. Before coding, ask one short question at a time using a concrete example. Use plain English and introduce technical terms after I answer. Mark each question **Course rule** or **Your choice**. I may reply `simpler`, `example`, `hint`, or `choose for me`. Do not edit until my answers specify one small, coherent slice. After each slice, show me one important line and ask what it does and what would break if it changed.
+> 和我一起构建第 1 天，从有序的内存状态开始。遵循 `AGENTS.md` 中学生主导的设计流程，绝不要访问 `../mini-lsm` 或 `../mini-lsm-mvcc`。写代码之前，每次只用一个具体例子提一个简短的问题。用平实的英语表述，并在我回答之后再引入技术术语。把每个问题标记为 **课程规则** 或 **你的选择**。我可以回复 `simpler`、`example`、`hint` 或 `choose for me`。在我的回答明确了一个小而自洽的切片之前，不要修改代码。每完成一个切片，给我看一行重要的代码，并问我它做什么，以及改动它会破坏什么。
 
-The first useful response is a concrete question about ordered state, not an architecture essay or a patch. Starting with Checkpoint 1 gives you one predictable path through the day. You may reorder checkpoints if you already understand their dependencies.
+第一个有用的回复应该是关于有序状态的具体问题，而不是架构论述或补丁。从检查点 1 开始，可以让你有一条可预期的当天路径。如果你已经理解各检查点之间的依赖关系，可以调整顺序。
 
-The tables below are audit guides. Do not paste a whole table back as a ready-made specification. Let the agent elicit one topic at a time, and use the table afterward to check whether the dialogue covered the important ground.
+下面的表格是审查指南。不要把整张表当作现成的规格说明粘贴回去。让智能体每次引出一个主题，事后用表格检查对话是否覆盖了重要内容。
 
-## Checkpoint 1: Ordered State
+## 检查点 1：有序状态
 
-Ask:
+提问：
 
-> Implement ordered in-memory state.
+> 实现有序的内存状态。
 
-This checkpoint covers the memtable and iterator layers. Use the [Memtable](./week1-01-memtable.md) and [Merge Iterator](./week1-02-merge-iterator.md) chapters when a question needs more context.
+这个检查点涵盖内存表和迭代器两层。当某个问题需要更多背景时，参考[内存表](./week1-01-memtable.md)和[归并迭代器](./week1-02-merge-iterator.md)两章。
 
-The agent should use concrete examples to help you work out at least these course rules:
+智能体应使用具体例子帮助你推导出至少以下课程规则：
 
-| Behavior to work out | Small case that exposes it |
+| 需要推导的行为 | 能暴露它的小例子 |
 | --- | --- |
-| Memtable ordering | Insert keys out of bytewise order, then scan. |
-| Duplicate precedence inside a memtable | Put two values for one key before reading it. |
-| Tombstone representation | Delete a key that still has a value in older state. |
-| Equal-key precedence across merge inputs | Reverse two inputs containing the same key. |
-| Iterator behavior after exhaustion or error | Call `next` again and check that iteration cannot resume. |
-| Write/freeze synchronization | Interleave insertion with a concurrent memtable freeze. |
+| 内存表有序性 | 按非字节序插入键，然后扫描。 |
+| 内存表内部的重复键优先级 | 读取之前为同一个键放入两个值。 |
+| 墓碑表示 | 删除一个在更旧状态中仍有值的键。 |
+| 归并输入之间相同键的优先级 | 交换两个包含相同键的输入。 |
+| 迭代器耗尽或出错后的行为 | 再次调用 `next`，确认迭代无法继续。 |
+| 写入与冻结的同步 | 把插入与并发的内存表冻结交错执行。 |
 
-One critical outcome is that an ordinary write retains the `state` read guard until insertion into the mutable memtable completes. Writing through a cloned snapshot after releasing the guard permits a concurrent freeze to make that memtable immutable before the write occurs.
+一个关键结果是：普通写入会一直持有 `state` 读守卫，直到写入可写内存表完成。如果在释放守卫之后通过克隆的快照写入，并发的冻结就可能在这笔写入发生之前把该内存表变成只读。
 
-Once the representation and ordering rules are settled, authorize the checkpoint's coherent implementation slices. After the complete checkpoint has a compiling first pass, reveal and run its tests from the repository root:
+表示方式和排序规则确定之后，授权检查点内自洽的实现切片。等整个检查点有了能编译的第一版之后，在仓库根目录展示并运行它的测试：
 
 ```shell
 cargo x copy-test --week 1 --day 1
@@ -75,62 +75,62 @@ cargo test -p mini-lsm-starter week1_day1
 cargo test -p mini-lsm-starter week1_day2
 ```
 
-After they pass, have the agent point to the exact comparison that resolves duplicate keys. Explain in your own words what that line is trying to do and why changing `>` to `>=`, or reversing input order, changes the visible value.
+测试通过后，让智能体指出裁决重复键的那处精确比较。用你自己的话解释那一行试图做什么，以及为什么把 `>` 改成 `>=`，或者颠倒输入顺序，会改变可见的值。
 
-## Checkpoint 2: Durable Representation
+## 检查点 2：持久化表示
 
-Ask:
+提问：
 
-> Implement the durable block and SST representation.
+> 实现持久化的块与 SSTable 表示。
 
-This checkpoint covers blocks, block iterators, SST builders, SST readers, SST iterators, Bloom filters, and final prefix compression. Consult [Block](./week1-03-block.md), [Sorted String Table](./week1-04-sst.md), and [SST Optimizations](./week1-07-sst-optimizations.md) when a question requires deeper context.
+这个检查点涵盖块、块迭代器、SSTable 构建器、SSTable 读取器、SSTable 迭代器、布隆过滤器以及最终的前缀压缩。当某个问题需要更深入的背景时，查阅[块](./week1-03-block.md)、[Sorted String Table](./week1-04-sst.md)和[SSTable 优化](./week1-07-sst-optimizations.md)。
 
-> **For the coding agent:** This checkpoint targets the final Day 7 prefix-compressed block format directly. Do not first implement the Day 3 layout and silently replace it. Explicitly ask which acceptance target applies and record that choice.
+> **给编码智能体的话：** 这个检查点直接针对第七天最终的前缀压缩块格式。不要先实现第三天的布局再悄悄替换它。请明确询问适用哪个验收目标，并记录该选择。
 
-First use concrete byte examples to derive the parts fixed by the course:
+首先用具体的字节例子推导课程固定的部分：
 
-| Behavior to work out | Small case that exposes it |
+| 需要推导的行为 | 能暴露它的小例子 |
 | --- | --- |
-| Integer encoding and exact block layout | Independently decode a three-entry block. |
-| Inclusive target-size accounting | Add an entry that makes the encoded block exactly the target size. |
-| Oversized first entry | Try to add a single representable record larger than the target. |
-| Prefix basis and reconstruction | Mix keys with a long shared prefix and no shared prefix. |
-| Lower-bound seek semantics | Seek before, between, at, and after stored keys. |
-| SST trailer placement | Locate metadata and Bloom sections from the end of the file. |
-| Bloom-filter authority | Compare a definite negative with a possible positive. |
+| 整数编码与精确的块布局 | 独立解码一个含三个条目的块。 |
+| 目标大小的包含式计算 | 添加一个使编码块恰好等于目标大小的条目。 |
+| 首条目过大 | 尝试添加一条可表示但大于目标的记录。 |
+| 前缀基与重建 | 混合使用共享长前缀和不共享前缀的键。 |
+| 下界定位语义 | 在存储的键之前、之间、之上和之后定位。 |
+| SSTable 尾部布局 | 从文件末尾定位元数据段和布隆过滤段。 |
+| 布隆过滤器的判定效力 | 对比确定的否定与可能的肯定。 |
 
-Then make the genuinely open implementation choices, such as scanning versus binary search when looking for the first key at or after a target, allocating versus reusing memory for reconstructed keys, and how much malformed-input checking to add without changing the provided API. Record required course rules separately from choices you made.
+然后做出真正开放的选择，例如：查找第一个大于或等于目标的键时用线性扫描还是二分查找；重建键时分配新内存还是复用内存；在不改变给定 API 的前提下加入多少畸形输入检查。请把课程规则和你自己的选择分开记录。
 
-The high-level SST trailer grammar is:
+SSTable 尾部的高层语法是：
 
 ```text
 blocks | metadata | metadata_offset:u32 | bloom | bloom_offset:u32
 ```
 
-The final four bytes contain `bloom_offset`; the metadata offset is the four-byte field immediately before the Bloom section, at `bloom_offset - 4`.
+最后四个字节是 `bloom_offset`；元数据偏移是紧邻布隆过滤段之前的那个四字节字段，位于 `bloom_offset - 4`。
 
-Treat the writer and reader as two parties implementing a protocol. A round-trip test alone can miss an encoder and decoder that agree with each other but disagree with the specified bytes. Ask for at least one independently calculated byte layout.
+把写入器和读取器当作实现同一协议的双方。仅靠往返测试可能漏掉一种情况：编码器和解码器彼此一致，但与规定的字节不一致。至少要求一份独立计算出的字节布局。
 
 <details>
-<summary>Worked example: one plain-English block-format stop</summary>
+<summary>示例：一次用通俗语言讲解的块格式停顿</summary>
 
-> **Student:** Implement block format.
+> **学生：** 实现块格式。
 >
-> **Agent:** **Course rule — What must one entry depend on?**
+> **智能体：** **课程规则——一个条目必须依赖什么？**
 >
-> A block contains `mini-a`, `mini-b`, and `mini-c`. The iterator is allowed to jump straight to `mini-c`. If `mini-c` stores only what changed from `mini-b`, can the iterator reconstruct it without first reading `mini-b`? Should each compressed key therefore compare itself with the first key or the previous key?
+> 一个块包含 `mini-a`、`mini-b` 和 `mini-c`。迭代器允许直接跳到 `mini-c`。如果 `mini-c` 只存储相对于 `mini-b` 变化的部分，迭代器能否在不先读取 `mini-b` 的情况下重建它？那么每个压缩后的键应该与首键比较，还是与前一个键比较？
 >
-> You can reply `simpler`, `example`, `hint`, or `choose for me`.
+> 你可以回复 `simpler`、`example`、`hint` 或 `choose for me`。
 >
-> **Student:** Compare with the first key. Then the iterator needs only the first key and the selected entry, rather than a chain of earlier entries.
+> **学生：** 与首键比较。这样迭代器只需要首键和选中的条目，而不是一串更早的条目。
 >
-> **Agent:** Correct. This is called the prefix basis. I will record “first key” as a course rule. One consequence is that an iterator can inspect any entry independently, which permits either a linear scan or binary search. That search method is a **Your choice** stop we can discuss next.
+> **智能体：** 正确。这称为前缀基。我会把「首键」记录为课程规则。一个后果是迭代器可以独立检查任意条目，因此线性扫描或二分查找都可以。用哪种查找方法是下一个 **你的选择** 停顿，我们可以接着讨论。
 
 </details>
 
-The example begins with an operation the student can picture and names the concept afterward. A real implementation stop must still preview the files and later validation target, wait for authorization, complete the checkpoint's first pass before revealing tests, report actual evidence, and stop before beginning the next slice.
+这个例子从学生能想象的操作开始，然后再命名概念。真实的实现停顿仍然必须预览涉及的文件和后续验证目标、等待授权、在展示测试之前完成检查点的第一版、报告实际证据，并在开始下一个切片之前停下。
 
-After the durable-representation checkpoint has a compiling first pass, reveal and run its tests:
+持久化表示检查点有了能编译的第一版之后，展示并运行它的测试：
 
 ```shell
 cargo x copy-test --week 1 --day 3
@@ -141,21 +141,21 @@ cargo test -p mini-lsm-starter week1_day4
 cargo test -p mini-lsm-starter week1_day7
 ```
 
-If a newly revealed test fails, the agent should explain the entries, bounds, or bytes the test supplies, the expected and observed result, and the challenged invariant. It must then ask you to diagnose the implementation. It should not search for the faulty line or suggest a repair before your attempt. Failures in the test command, dependency setup, or harness itself are exceptions that the agent may investigate directly.
+如果新展示的测试失败，智能体应说明测试提供的条目、边界或字节，预期结果与实际结果，以及被挑战的不变量。然后它必须请你诊断实现。在你尝试之前，它不应查找出错的行，也不应建议修复。测试命令本身、依赖配置或测试框架的失败属于例外，智能体可以直接调查。
 
-Before approving the completed checkpoint, decode three keys by hand: one with no shared prefix, one with a long shared prefix, and one with an empty value. Confirm that a seek returns the first key greater than or equal to its target and that a Bloom-filter negative can never hide a present key.
+批准完成的检查点之前，手工解码三个键：一个没有共享前缀，一个有很长的共享前缀，一个带空值。确认定位返回第一个大于或等于目标的键，并且布隆过滤器的否定结果绝不会隐藏一个存在的键。
 
-## Checkpoint 3: One Logical Engine
+## 检查点 3：一个逻辑引擎
 
-Ask:
+提问：
 
-> Connect the components into one logical engine.
+> 把各个组件连接成一个逻辑引擎。
 
-This checkpoint covers the read path, write path, freezing, flushing, SST filtering, and iterator accounting. Use [Read Path](./week1-05-read-path.md) and [Write Path](./week1-06-write-path.md) when a decision needs more context.
+这个检查点涵盖读路径、写路径、冻结、落盘、SSTable 过滤和迭代器计数。当某个决策需要更多背景时，使用[读路径](./week1-05-read-path.md)和[写路径](./week1-06-write-path.md)。
 
-The agent must lead contract derivations for source ordering, tombstone filtering, scan bounds, flush selection, and lifecycle behavior. It should separately ask about open implementation choices such as iterator composition, lock scope that still preserves the synchronization contract, and where to perform expensive SST construction.
+智能体必须主导来源排序、墓碑过滤、扫描边界、落盘选择和生命周期行为的约定推导。它应单独询问开放的实现选择，例如迭代器如何组合、在仍满足同步约定的前提下锁的范围，以及在哪里执行开销很大的 SSTable 构建。
 
-The central source-priority rule should emerge from those choices:
+核心的来源优先级规则应从这些选择中得出：
 
 ```text
 mutable memtable
@@ -163,9 +163,9 @@ mutable memtable
   > L0 SSTs, newest to oldest
 ```
 
-For a duplicate key, the first visible entry wins. If it is a tombstone, the key is absent; an older value must not be resurrected.
+对于重复的键，第一个可见条目胜出。如果它是墓碑，该键就不存在；更旧的值不得重新出现。
 
-Review the flush transition with concrete state:
+用具体状态复查落盘的状态转换：
 
 ```text
 before: imm = [newest, ..., oldest], L0 = [newest, ..., oldest]
@@ -173,13 +173,13 @@ flush:  build an SST from the oldest immutable memtable
 after:  remove exactly that memtable and insert its SST at the newest side of L0
 ```
 
-Expensive SST construction and I/O should happen outside the `state` read-write lock. Structural changes still need `state_lock` so two flushes cannot select and install the same memtable concurrently.
+开销大的 SSTable 构建和 I/O 应在 `state` 读写锁之外进行。结构变更仍然需要 `state_lock`，这样两次落盘就不会并发选中并安装同一个内存表。
 
-For Day 1, the lifecycle contract is fixed: `close` stops and joins the existing worker threads and is harmless when called again after their handles have already been taken. It does not implicitly flush the remaining mutable memtable. Treat a different contract as an explicit scope change, not an ordinary implementation preference.
+对第 1 天而言，生命周期约定是固定的：`close` 停止并等待现有的工作线程结束，并且在句柄已经被取走之后再次调用也不会出错。它不会隐式地把剩余的可写内存表落盘。若采用不同的约定，应视为明确的范围变更，而不是普通的实现偏好。
 
-Before approving this checkpoint, construct one key that appears in the mutable memtable, an immutable memtable, and an L0 SST. Predict `get` and `scan` when the newest entry is first a value and then a tombstone. Also exercise included, excluded, and unbounded scan endpoints.
+批准这个检查点之前，构造一个同时出现在可写内存表、某个只读内存表和某个 L0 SSTable 中的键。分别预测最新条目是值、然后变成墓碑时 `get` 和 `scan` 的结果。同时演练包含、排除和无界的扫描端点。
 
-After this checkpoint has a compiling first pass, reveal and run its tests:
+这个检查点有了能编译的第一版之后，展示并运行它的测试：
 
 ```shell
 cargo x copy-test --week 1 --day 5
@@ -188,40 +188,40 @@ cargo test -p mini-lsm-starter week1_day5
 cargo test -p mini-lsm-starter week1_day6
 ```
 
-## Audit the Finished Engine
+## 审查完成的引擎
 
-Run the full project check from the repository root:
+在仓库根目录运行完整的项目检查：
 
 ```shell
 cargo x scheck
 ```
 
-Then ask the agent for a final evidence report containing:
+然后要求智能体提供一份最终证据报告，包含：
 
-1. the combined decision ledgers and any delegated choices;
-2. the commands it ran and their outcomes;
-3. a data-flow trace for one `put`, one `get`, one bounded `scan`, and one flush;
-4. the source-priority rule used by both point reads and scans;
-5. one concurrency risk around freezing or flushing and the synchronization that prevents it;
-6. one optimization that must not alter logical results; and
-7. one weakness or boundary case not established by the supplied tests.
+1. 合并后的决策台账以及任何被委托做出的选择；
+2. 它运行过的命令及其结果；
+3. 一次 `put`、一次 `get`、一次有界 `scan` 和一次落盘的数据流追踪；
+4. 点查和扫描共用的来源优先级规则；
+5. 冻结或落盘相关的一处并发风险，以及防止它的同步机制；
+6. 一项不得改变逻辑结果的优化；以及
+7. 一处提供的测试无法确认的弱点或边界情况。
 
-Review actual diffs and test output, not only the report. Search for removed assertions, changed tests, broad lint suppressions, and error paths replaced with `unwrap` without justification.
+请审查实际的 diff 和测试输出，而不只是报告。查找被删除的断言、被修改的测试、大范围的 lint 抑制，以及在无正当理由的情况下把错误路径换成 `unwrap` 的情况。
 
-Finally, introduce one small, deliberate fault—for example, reverse equal-key precedence in a merge iterator or make an excluded upper bound inclusive. Predict which test should fail, run it, and revert the fault. This verifies that the tests can detect at least one mistake you understand.
+最后，引入一个小的故意故障——例如颠倒归并迭代器中相同键的优先级，或把排除的上界改成包含。预测哪个测试应当失败，运行它，然后撤销故障。这验证了测试至少能发现一个你理解的错误。
 
-## Day 1 Completion Checkpoint
+## 第 1 天完成检查点
 
-You are ready for Day 2 when you can do these without delegating the answer back to the agent:
+当你能在不把答案推回给智能体的前提下完成以下事项，就可以进入第 2 天：
 
-- draw the write, read, and flush paths from memory;
-- explain the ordering rule that selects one value from duplicate keys;
-- explain the byte layout of a block and how an SST locates one;
-- identify where tombstones are created and where they are filtered;
-- explain why a Bloom-filter negative is safe and a positive is inconclusive;
-- describe an unsafe flush interleaving and how the implementation prevents it; and
-- turn a suspected invariant violation into a minimal test.
+- 凭记忆画出写路径、读路径和落盘路径；
+- 解释从重复键中选出一个值的排序规则；
+- 解释块的字节布局，以及 SSTable 如何定位到某个块；
+- 指出墓碑在哪里创建、在哪里被过滤；
+- 解释为什么布隆过滤器的否定结果是安全的，而肯定结果不确定；
+- 描述一种不安全的落盘交错执行，以及实现如何防止它；并且
+- 把一个疑似的不变量违反转化为最小测试。
 
-If you cannot yet do one of these, use the corresponding Mini-LSM chapter and ask the agent to quiz you with concrete states or byte layouts. The measure of success is not whether you typed the implementation. It is whether you can specify, inspect, test, and change the system with confidence.
+如果其中某一项你还做不到，请阅读对应的 Mini-LSM 章节，并让智能体用具体状态或字节布局来考你。衡量成功的标准不是你是否亲手敲出了实现，而是你能否有把握地规定、检查、测试并修改这个系统。
 
 {{#include copyright.md}}

@@ -18,15 +18,15 @@ use crate::key::{KeySlice, KeyVec};
 
 use super::{Block, SIZEOF_U16};
 
-/// Builds a block.
+/// 构建一个块。
 pub struct BlockBuilder {
-    /// Offsets of each key-value entries.
+    /// 每个键值对条目的偏移量。
     offsets: Vec<u16>,
-    /// All serialized key-value pairs in the block.
+    /// 块中所有序列化后的键值对。
     data: Vec<u8>,
-    /// The expected block size.
+    /// 期望的块大小。
     block_size: usize,
-    /// The first key in the block
+    /// 块中的第一个键
     first_key: KeyVec,
 }
 
@@ -45,7 +45,7 @@ fn compute_overlap(first_key: KeySlice, key: KeySlice) -> usize {
 }
 
 impl BlockBuilder {
-    /// Creates a new block builder.
+    /// 创建一个新的块构建器。
     pub fn new(block_size: usize) -> Self {
         Self {
             offsets: Vec::new(),
@@ -56,11 +56,11 @@ impl BlockBuilder {
     }
 
     fn estimated_size(&self) -> usize {
-        SIZEOF_U16 /* number of key-value pairs in the block */ +  self.offsets.len() * SIZEOF_U16 /* offsets */ + self.data.len()
-        // key-value pairs
+        SIZEOF_U16 /* 块中键值对的数量 */ +  self.offsets.len() * SIZEOF_U16 /* 偏移量 */ + self.data.len()
+        // 键值对
     }
 
-    /// Adds a key-value pair to the block. Returns false when the block is full.
+    /// 向块中添加一个键值对。块已满时返回 false。
     #[must_use]
     pub fn add(&mut self, key: KeySlice, value: &[u8]) -> bool {
         assert!(!key.is_empty(), "key must not be empty");
@@ -80,7 +80,7 @@ impl BlockBuilder {
         if !self.is_empty() && (block_is_full || offset_is_full || count_is_full) {
             return false;
         }
-        // Add the offset of the data into the offset array.
+        // 把数据偏移量写入偏移数组。
         let Ok(offset) = u16::try_from(self.data.len()) else {
             return false;
         };
@@ -89,15 +89,15 @@ impl BlockBuilder {
         let Ok(overlap) = u16::try_from(overlap) else {
             return false;
         };
-        // Encode key overlap.
+        // 编码键的重叠长度。
         self.data.put_u16(overlap);
-        // Encode key length.
+        // 编码键的长度。
         self.data.put_u16(key_len - overlap);
-        // Encode key content.
+        // 编码键的内容。
         self.data.put(&key.raw_ref()[usize::from(overlap)..]);
-        // Encode value length.
+        // 编码值的长度。
         self.data.put_u16(value_len);
-        // Encode value content.
+        // 编码值的内容。
         self.data.put(value);
 
         if self.first_key.is_empty() {
@@ -107,12 +107,12 @@ impl BlockBuilder {
         true
     }
 
-    /// Check if there are no key-value pairs in the block.
+    /// 检查块中是否没有键值对。
     pub fn is_empty(&self) -> bool {
         self.offsets.is_empty()
     }
 
-    /// Finalize the block.
+    /// 完成块的构建。
     pub fn build(self) -> Block {
         if self.is_empty() {
             panic!("block should not be empty");

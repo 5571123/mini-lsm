@@ -57,39 +57,38 @@ fn take_u64(buf: &mut &[u8], what: &str) -> Result<u64> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockMeta {
-    /// Offset of this data block.
+    /// 该数据块的偏移量。
     pub offset: usize,
-    /// The first key of the data block.
+    /// 该数据块的第一个键。
     pub first_key: KeyBytes,
-    /// The last key of the data block.
+    /// 该数据块的最后一个键。
     pub last_key: KeyBytes,
 }
 
 impl BlockMeta {
-    /// Encode block meta to a buffer.
+    /// 把块元信息编码到缓冲区。
     pub fn encode_block_meta(
         block_meta: &[BlockMeta],
         max_ts: u64,
         buf: &mut Vec<u8>,
     ) -> Result<()> {
-        let mut estimated_size = std::mem::size_of::<u32>(); // number of blocks
+        let mut estimated_size = std::mem::size_of::<u32>(); // 块的数量
         for meta in block_meta {
-            // The size of offset
+            // 偏移量的大小
             estimated_size += std::mem::size_of::<u32>();
-            // The size of key length
+            // 键长度的大小
             estimated_size += std::mem::size_of::<u16>();
-            // The size of actual key
+            // 实际键的大小
             estimated_size += meta.first_key.raw_len();
-            // The size of key length
+            // 键长度的大小
             estimated_size += std::mem::size_of::<u16>();
-            // The size of actual key
+            // 实际键的大小
             estimated_size += meta.last_key.raw_len();
         }
-        estimated_size += std::mem::size_of::<u64>(); // max timestamp
-        estimated_size += std::mem::size_of::<u32>(); // checksum
+        estimated_size += std::mem::size_of::<u64>(); // 最大时间戳
+        estimated_size += std::mem::size_of::<u32>(); // 校验和
 
-        // Reserve the space to improve performance, especially when the size of incoming data is
-        // large
+        // 预留空间以提升性能，在传入数据较大时尤为明显
         buf.reserve(estimated_size);
         let original_len = buf.len();
         buf.put_u32(u32::try_from(block_meta.len()).context("too many SST blocks")?);
@@ -112,7 +111,7 @@ impl BlockMeta {
         Ok(())
     }
 
-    /// Decode block meta from a buffer.
+    /// 从缓冲区解码块元信息。
     pub fn decode_block_meta(buf: &[u8]) -> Result<(Vec<BlockMeta>, u64)> {
         let trailer_size = std::mem::size_of::<u64>() + std::mem::size_of::<u32>();
         ensure!(
@@ -171,22 +170,22 @@ impl BlockMeta {
     }
 }
 
-/// A file object.
+/// 一个文件对象。
 pub struct FileObject(Option<File>, u64);
 
 impl FileObject {
     pub fn read(&self, offset: u64, len: u64) -> Result<Vec<u8>> {
-        use std::os::unix::fs::FileExt;
         let end = offset
             .checked_add(len)
             .context("file read range overflow")?;
         ensure!(end <= self.1, "file read range is out of bounds");
         let len = usize::try_from(len).context("file read is too large")?;
         let mut data = vec![0; len];
-        self.0
+        let file = self
+            .0
             .as_ref()
-            .context("cannot read a metadata-only file object")?
-            .read_exact_at(&mut data[..], offset)?;
+            .context("cannot read a metadata-only file object")?;
+        read_exact_at(file, &mut data, offset)?;
         Ok(data)
     }
 
@@ -194,10 +193,15 @@ impl FileObject {
         self.1
     }
 
-    /// Create a new file object (day 2) and write the file to the disk (day 4).
+    /// 创建一个新的文件对象（day 2），并把文件写入磁盘（day 4）。
     pub fn create(path: &Path, data: Vec<u8>) -> Result<Self> {
         std::fs::write(path, &data)?;
-        File::open(path)?.sync_all()?;
+        // Windows 下 `FlushFileBuffers` 需要写权限，只读句柄会返回「拒绝访问」，故以读写方式打开。
+        File::options()
+            .read(true)
+            .write(true)
+            .open(path)?
+            .sync_all()?;
         Ok(FileObject(
             Some(File::options().read(true).write(false).open(path)?),
             u64::try_from(data.len()).context("SST file is too large")?,
@@ -211,13 +215,45 @@ impl FileObject {
     }
 }
 
-/// An SSTable.
+/// 按偏移读取数据：Unix 使用 `pread`，Windows 使用 `seek_read`。
+///
+/// 注意不要用「先 seek 再 read」实现：`SsTable` 会被多个线程共享读取，共享的文件游标会被并发修改。
+#[cfg(unix)]
+fn read_exact_at(file: &File, buf: &mut [u8], offset: u64) -> std::io::Result<()> {
+    use std::os::unix::fs::FileExt;
+    file.read_exact_at(buf, offset)
+}
+
+#[cfg(windows)]
+fn read_exact_at(file: &File, mut buf: &mut [u8], mut offset: u64) -> std::io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    while !buf.is_empty() {
+        match file.seek_read(buf, offset) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "failed to fill whole buffer",
+                ));
+            }
+            Ok(n) => {
+                offset += n as u64;
+                let rest = buf;
+                buf = &mut rest[n..];
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
+}
+
+/// 一个 SSTable。
 pub struct SsTable {
-    /// The actual storage unit of SsTable, the format is as above.
+    /// SsTable 实际使用的存储单元，格式如上所述。
     pub(crate) file: FileObject,
-    /// The meta blocks that hold info for data blocks.
+    /// 保存数据块信息的元数据块。
     pub(crate) block_meta: Vec<BlockMeta>,
-    /// The offset that indicates the start point of meta blocks in `file`.
+    /// 表示元数据块在 `file` 中起始位置的偏移量。
     pub(crate) block_meta_offset: usize,
     id: usize,
     block_cache: Option<Arc<BlockCache>>,
@@ -232,7 +268,7 @@ impl SsTable {
         Self::open(0, None, file)
     }
 
-    /// Open SSTable from a file.
+    /// 从一个文件打开 SSTable。
     pub fn open(id: usize, block_cache: Option<Arc<BlockCache>>, file: FileObject) -> Result<Self> {
         let len = file.size();
         let bloom_trailer_offset = len
@@ -301,7 +337,7 @@ impl SsTable {
         })
     }
 
-    /// Create a mock SST with only first key + last key metadata
+    /// 创建一个只含第一个键与最后一个键元信息的模拟 SST
     pub fn create_meta_only(
         id: usize,
         file_size: u64,
@@ -321,7 +357,7 @@ impl SsTable {
         }
     }
 
-    /// Read a block from the disk.
+    /// 从磁盘读取一个块。
     pub fn read_block(&self, block_idx: usize) -> Result<Arc<Block>> {
         let offset = self
             .block_meta
@@ -352,7 +388,7 @@ impl SsTable {
         Ok(Arc::new(Block::decode_checked(block_data)?))
     }
 
-    /// Read a block from disk, with block cache.
+    /// 从磁盘读取一个块，并经过块缓存。
     pub fn read_block_cached(&self, block_idx: usize) -> Result<Arc<Block>> {
         if let Some(ref block_cache) = self.block_cache {
             let blk = block_cache
@@ -364,14 +400,14 @@ impl SsTable {
         }
     }
 
-    /// Find the block that may contain `key`.
+    /// 找到可能包含 `key` 的块。
     pub fn find_block_idx(&self, key: KeySlice) -> usize {
         self.block_meta
             .partition_point(|meta| meta.first_key.as_key_slice() <= key)
             .saturating_sub(1)
     }
 
-    /// Get number of data blocks.
+    /// 获取数据块的数量。
     pub fn num_of_blocks(&self) -> usize {
         self.block_meta.len()
     }

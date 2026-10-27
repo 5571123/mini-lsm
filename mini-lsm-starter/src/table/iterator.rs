@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
+#![allow(unused_variables)] // TODO(you): 实现该模块后删除此 lint
+#![allow(dead_code)] // TODO(you): 实现该模块后删除此 lint
 
 use std::sync::Arc;
 
@@ -22,7 +22,7 @@ use anyhow::Result;
 use super::SsTable;
 use crate::{block::BlockIterator, iterators::StorageIterator, key::KeySlice};
 
-/// An iterator over the contents of an SSTable.
+/// SSTable 内容上的迭代器。
 pub struct SsTableIterator {
     table: Arc<SsTable>,
     blk_iter: BlockIterator,
@@ -30,24 +30,23 @@ pub struct SsTableIterator {
 }
 
 impl SsTableIterator {
-    /// Create a new iterator and seek to the first key-value pair in the first data block.
+    /// 创建新迭代器，并定位到第一个数据块中的第一个键值对。
     pub fn create_and_seek_to_first(table: Arc<SsTable>) -> Result<Self> {
         unimplemented!()
     }
 
-    /// Seek to the first key-value pair in the first data block.
+    /// 定位到第一个数据块中的第一个键值对。
     pub fn seek_to_first(&mut self) -> Result<()> {
         unimplemented!()
     }
 
-    /// Create a new iterator and seek to the first key-value pair which >= `key`.
+    /// 创建新迭代器，并定位到第一个键 >= `key` 的键值对。
     pub fn create_and_seek_to_key(table: Arc<SsTable>, key: KeySlice) -> Result<Self> {
         unimplemented!()
     }
 
-    /// Seek to the first key-value pair which >= `key`.
-    /// Note: You probably want to review the handout for detailed explanation when implementing
-    /// this function.
+    /// 定位到第一个键 >= `key` 的键值对。
+    /// 注意：实现该函数时，你大概需要回顾讲义中的详细说明。
     pub fn seek_to_key(&mut self, key: KeySlice) -> Result<()> {
         unimplemented!()
     }
@@ -56,23 +55,23 @@ impl SsTableIterator {
 impl StorageIterator for SsTableIterator {
     type KeyType<'a> = KeySlice<'a>;
 
-    /// Return the `key` that's held by the underlying block iterator.
+    /// 返回底层块迭代器当前持有的 `key`。
     fn key(&self) -> KeySlice<'_> {
         unimplemented!()
     }
 
-    /// Return the `value` that's held by the underlying block iterator.
+    /// 返回底层块迭代器当前持有的 `value`。
     fn value(&self) -> &[u8] {
         unimplemented!()
     }
 
-    /// Return whether the current block iterator is valid or not.
+    /// 返回当前块迭代器是否有效。
     fn is_valid(&self) -> bool {
         unimplemented!()
     }
 
-    /// Move to the next `key` in the block.
-    /// Note: You may want to check if the current block iterator is valid after the move.
+    /// 移动到块中的下一个 `key`。
+    /// 注意：移动之后你可能需要检查当前块迭代器是否有效。
     fn next(&mut self) -> Result<()> {
         unimplemented!()
     }

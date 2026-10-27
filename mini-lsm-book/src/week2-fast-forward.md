@@ -2,69 +2,69 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Day 2 - Compaction and Recovery
+# 第二天：压缩与恢复
 
-This is the second day of [Mini-LSM with Coding Agents](./agent-fast-forward-overview.md). You will turn the Day 1 engine into a storage engine that reorganizes files in the background and reconstructs its state after a restart:
+这是 [Mini-LSM with Coding Agents](./agent-fast-forward-overview.md) 的第二天。你要把第一天的引擎改造成一个能在后台重组文件、并在重启后重建自身状态的存储引擎：
 
 ```text
 memtables + WALs -> SSTs -> compaction -> sorted runs
           \________ manifest records file ownership ________/
 ```
 
-The difficult part is not producing more SSTs. It is preserving the newest value, retaining concurrent work, and making every durable record tell the truth after a crash.
+困难之处不在于产出更多 SST，而在于保留最新的值、保留并发进行的工作，并让每条持久化记录在崩溃之后仍然说真话。
 
-## What You Will Finish
+## 你将完成什么
 
-At the end of this path:
+这条路径结束时：
 
-- full, simple leveled, tiered, and dynamic leveled compaction work;
-- `get` and `scan` preserve newest-value priority across every layout;
-- compaction can run without losing an L0 flush or tier created concurrently;
-- a manifest reconstructs the live SST layout;
-- WAL-backed memtables restore synchronized writes;
-- batch writes preserve the existing `put` and `delete` behavior;
-- checksums protect SST blocks and metadata, Bloom filters, WAL records, and manifest records; and
-- you can predict a compaction task, trace a crash boundary, and identify the bytes protected by each checksum.
+- 完整压缩、简单分层压缩、分层（tiered）压缩和动态分层压缩都能工作；
+- `get` 和 `scan` 在每种布局下都保持最新值优先；
+- 压缩运行时不会丢失并发创建的 L0 落盘或层（tier）；
+- 清单（manifest）能重建有效的 SST 布局；
+- 带 WAL 的内存表能恢复已同步的写入；
+- 批量写保持现有 `put` 和 `delete` 的行为；
+- 校验和保护 SST 的块与元数据、布隆过滤器、WAL 记录和清单（manifest）记录；
+- 你能预测一个压缩任务、跟踪一个崩溃边界，并指出每个校验和保护的字节。
 
-Tests and simulator output are evidence, not the specification. A plausible file layout can still return stale data, resurrect a deletion, or reference a file that was never made durable.
+测试和模拟器输出是证据，不是规范。一个看起来合理的文件布局仍可能返回过期数据、让已删除的值重新出现，或引用一个从未持久化的文件。
 
-## Prepare Day 2
+## 准备第二天
 
-Begin from a Day 1 implementation that passes its complete suite. Verify that it still compiles, but do not copy the Week 2 tests yet:
+从一份通过全部测试的第一天实现开始。确认它仍能编译，但先不要复制第二周的测试：
 
 ```shell
 cargo check -p mini-lsm-starter --lib
 ```
 
-Week 2 has supplied tests for its original Days 1 through 6. Reveal each one only after the corresponding checkpoint or compaction policy has a compiling independent first pass. The checksum work from original Day 7 has no dedicated supplied tests, so you will need your own corruption cases.
+第二周为其原本的第一天到第六天提供了测试。只有当对应的检查点或压缩策略已有能编译的独立第一版之后，才揭示每一项测试。原第七天的校验和工作没有提供的专门测试，因此你需要自己编写损坏用例。
 
-With the agent running from `mini-lsm-starter`, send:
+在 `mini-lsm-starter` 目录下运行代理，然后发送：
 
-> Build Day 2 with me, starting with one safe full compaction. Follow the student-owned design protocol in `AGENTS.md` and never access `../mini-lsm` or `../mini-lsm-mvcc`. Ask one short question at a time using a concrete set of files, keys, or crash points. Mark each question **Course rule** or **Your choice**. I may reply `simpler`, `example`, `hint`, or `choose for me`. Do not edit until my answers specify one small, coherent slice. After each slice, show me one important line and ask what it does and what would break if it changed.
+> 和我一起构建第二天，从一次安全的完整压缩开始。遵循 `AGENTS.md` 中学生主导的设计流程，绝不要访问 `../mini-lsm` 或 `../mini-lsm-mvcc`。每次只问一个短问题，并使用一组具体的文件、键或崩溃点。把每个问题标记为**课程规则**或**你的选择**。我可能会回复 `simpler`、`example`、`hint` 或 `choose for me`。在我的回答确定一个小的、自洽的切片之前，不要编辑。每完成一个切片，给我看一行重要的代码，并问我它在做什么、如果改变它会破坏什么。
 
-Use the checkpoints in order unless you can explain why a different dependency order is safe. The tables are audit guides, not questionnaires to paste into the agent.
+除非你能说明为什么另一种依赖顺序同样安全，否则请按顺序使用这些检查点。表格是审查指南，不是要粘贴给代理的问卷。
 
-## Checkpoint 1: One Safe Compaction
+## 检查点 1：一次安全的压缩
 
-Ask:
+提问：
 
-> Implement one full compaction and read from its output.
+> 实现一次完整压缩，并从它的输出读取。
 
-This checkpoint covers full compaction, the concat iterator, and the two-level read path. Use [Compaction Implementation](./week2-01-compaction.md) when a question needs more context.
+这个检查点覆盖完整压缩、concat 迭代器和两层读路径。当某个问题需要更多背景时，使用[压缩实现](./week2-01-compaction.md)。
 
-The agent should help you work out these course rules from small file states:
+代理应帮助你在小的文件状态上推导出这些课程规则：
 
-| Behavior to work out | Small case that exposes it |
+| 需要推导的行为 | 能暴露它的小例子 |
 | --- | --- |
-| Duplicate-key priority | Put a newer value in L0 and an older value in L1. |
-| Tombstone removal | Compare a full bottom-level compaction with a task that leaves an older level untouched. |
-| Concurrent result installation | Flush file 6 after a task captures L0 files 5 and 4. |
-| Empty output | Compact inputs whose newest entries are all tombstones. |
-| Output splitting | Cross the target SST size with one more entry. |
-| Concat-iterator precondition | Swap two non-overlapping SSTs or make their ranges overlap. |
-| Reader lifetime | Unlink an input file while an older state snapshot still owns its open handle. |
+| 重复键优先级 | 在 L0 放一个较新的值，在 L1 放一个较旧的值。 |
+| 墓碑清除 | 对比一次完整的底层压缩，和一个留下更旧层未动的任务。 |
+| 并发结果安装 | 在任务选取 L0 文件 5 和 4 之后，落盘文件 6。 |
+| 空输出 | 压缩其最新条目全是墓碑的输入。 |
+| 输出切分 | 再用一个条目越过目标 SST 大小。 |
+| concat 迭代器前置条件 | 交换两个不重叠的 SST，或让它们的范围重叠。 |
+| 读线程生命周期 | 在较旧的状态快照仍持有其打开的句柄时，解除链接一个输入文件。 |
 
-The central installation case is:
+核心的安装场景是：
 
 ```text
 task captured:  L0 = [5, 4], L1 = [1, 2]
@@ -72,88 +72,88 @@ while building: L0 file 6 is flushed
 install result: L0 = [6],    L1 = [new sorted outputs]
 ```
 
-Merge and write the outputs outside `state_lock`. When the outputs are ready, acquire `state_lock`, apply the task to the latest state, remove exactly the captured input IDs, and retain file 6. Do not replace the current L0 with the task's old snapshot.
+在 `state_lock` 之外合并并写出输出。输出就绪后，获取 `state_lock`，把任务应用到最新状态，只移除被选取的输入 ID，并保留文件 6。不要用任务持有的旧快照替换当前 L0。
 
-Inputs must be presented to the merge iterator from newest to oldest. A tombstone can be discarded only when the task reaches the bottom and therefore includes every possible older version of the key. If every surviving entry is discarded, return no output SST instead of building an empty one.
+输入必须按从新到旧的顺序提供给归并迭代器。只有当任务到达底层、因而包含该键所有可能更旧的版本时，墓碑才能被丢弃。如果所有幸存条目都被丢弃，返回空输出，而不是构建一个空 SST。
 
-L1 is one sorted run: its SST ranges do not overlap and are ordered by first key. Its concat iterator should open only the active SST rather than eagerly loading one block from every file.
+L1 是一个有序段：它的 SST 范围互不重叠，并按第一个键排序。它的 concat 迭代器应只打开活跃的 SST，而不是预先从每个文件各加载一个块。
 
-Reveal Week 2 Day 1 only after this checkpoint's first pass is complete:
+只有在这个检查点的第一版完成之后，才揭示第二周第一天的测试：
 
 ```shell
 cargo x copy-test --week 2 --day 1
 cargo test -p mini-lsm-starter week2_day1
 ```
 
-Before approving the checkpoint, use one key that appears in both L0 and L1. Predict the result when L0 contains a value and when it contains a tombstone. After the focused check passes, explain the line that removes captured L0 IDs without removing a later flush.
+在通过这个检查点之前，用一个同时出现在 L0 和 L1 中的键。预测 L0 包含值时的结果，以及 L0 包含墓碑时的结果。针对性检查通过之后，解释那行移除被选取 L0 ID、同时不误删后续落盘文件的代码。
 
-## Checkpoint 2: Decide What to Compact
+## 检查点 2：决定压缩什么
 
-Ask:
+提问：
 
-> Implement the compaction schedulers, one policy at a time.
+> 实现压缩调度器，一次一个策略。
 
-Use [Simple Leveled Compaction](./week2-02-simple.md), [Tiered Compaction](./week2-03-tiered.md), [Leveled Compaction](./week2-04-leveled.md), and the [Week 2 overview](./week2-overview.md) as references.
+以[简单分层压缩](./week2-02-simple.md)、[分层（tiered）压缩](./week2-03-tiered.md)、[分层（leveled）压缩](./week2-04-leveled.md)和[第二周概览](./week2-overview.md)作为参考。
 
-Follow this default sequence for each policy:
+对每个策略，遵循这个默认顺序：
 
-1. implement task selection and result application against the simulator state;
-2. run a short simulator trace and explain every selected task;
-3. add the policy to compaction dispatch, flushing, and reads; and
-4. reveal and run that policy's supplied test only after its first pass is complete; and
-5. stop for review before beginning the next policy.
+1. 针对模拟器状态实现任务选择和结果应用；
+2. 运行一段简短的模拟器跟踪，并解释每个被选取的任务；
+3. 把该策略加入压缩分发、落盘和读取路径；以及
+4. 只有该策略的第一版完成之后，才揭示并运行它提供的测试；以及
+5. 在开始下一个策略之前停下来评审。
 
-The policy tests map to commands as follows:
+各策略的测试对应以下命令：
 
 ```shell
-# Simple leveled
+# 简单分层
 cargo x copy-test --week 2 --day 2
 cargo test -p mini-lsm-starter week2_day2
 
-# Tiered
+# 分层（tiered）
 cargo x copy-test --week 2 --day 3
 cargo test -p mini-lsm-starter week2_day3
 
-# Dynamic leveled
+# 动态分层
 cargo x copy-test --week 2 --day 4
 cargo test -p mini-lsm-starter week2_day4
 ```
 
-> **For the coding agent:** The completed Week 2 track implements all three compaction policies — simple leveled, tiered, and dynamic leveled. This is a course rule, not a student choice. Genuine student choices are helper structure, allocation, and equivalent search methods.
+> **给编码代理：** 完整的第二周路径实现全部三种压缩策略——简单分层、分层（tiered）和动态分层。这是课程规则，不是学生的选择。真正属于学生选择的是辅助结构、内存分配和等价的查找方法。
 
-### Simple leveled
+### 简单分层
 
 ```text
 L0: overlapping files, newest to oldest
 L1..Ln: one non-overlapping sorted run per level
 ```
 
-L0 reaches its file-count trigger before it compacts into L1. Below L0, let the upper and lower levels contain `U` and `L` files. Trigger when `L / U * 100` is less than `size_ratio_percent`; a task consumes both complete levels. Handle an empty upper level without dividing by zero. The controller must eventually return no task so the simulator and background worker converge. The upper level is newer and wins equal keys. Preserve tombstones unless the lower level is the bottom.
+L0 先达到它的文件数触发条件，然后才压缩进 L1。在 L0 以下，设上层和下层分别有 `U` 和 `L` 个文件。当 `L / U * 100` 小于 `size_ratio_percent` 时触发；一个任务消耗两个完整的层。要在上层为空时避免除以零。控制器最终必须返回「无任务」，让模拟器和后台工作线程收敛。上层更新，遇到相同的键时胜出。除非下层是最底层，否则保留墓碑。
 
-### Tiered
+### 分层（tiered）
 
 ```text
 levels[0] = newest tier
 levels[last] = oldest tier
 ```
 
-Tiered compaction does not use L0: every flush creates a one-SST tier at the front. Do not schedule until the number of tiers reaches `num_tiers`. Then consider triggers in this fixed order:
+分层（tiered）压缩不使用 L0：每次落盘都在前端创建一个只含一个 SST 的层（tier）。在层数达到 `num_tiers` 之前不要调度。然后按这个固定顺序考虑触发条件：
 
-1. compact every tier when `sum(all tiers except bottom) / bottom_size` reaches `max_size_amplification_percent / 100`;
-2. scanning from newest to oldest, compact the newer prefix before the first tier whose size divided by that prefix's total is greater than `(100 + size_ratio) / 100`, provided the prefix has at least `min_merge_width` tiers; and
-3. if neither ratio selects work, merge the first `max_merge_width` tiers—or all tiers when it is unset—to reduce the number of sorted runs.
+1. 当 `sum(all tiers except bottom) / bottom_size` 达到 `max_size_amplification_percent / 100` 时，压缩所有层；
+2. 从新到旧扫描，在第一个「其大小除以前缀总和大于 `(100 + size_ratio) / 100`」的层之前，压缩较新的前缀，前提是该前缀至少有 `min_merge_width` 个层；以及
+3. 如果两个比值都没有选中工作，就合并前 `max_merge_width` 个层——未设置时则合并所有层——以减少有序段的数量。
 
-A task selects a contiguous prefix of newest tiers. If `max_merge_width` leaves an older tier behind, `bottom_tier_included` is false and tombstones must remain. Insert the output after any newer tier flushed while the task was running.
+一个任务选取一段连续的最新层前缀。如果 `max_merge_width` 留下了更旧的层，`bottom_tier_included` 为假，墓碑必须保留。把输出插在任务运行期间落盘的更新层之后。
 
-### Dynamic leveled
+### 动态分层
 
-Compute target sizes from the bottom level upward. The first level with a positive target is the base level; an eligible L0 task goes directly there and takes priority over size-based tasks. For lower levels, compute `current_size / target_size`, choose the highest score greater than 1, select the oldest upper-level SST, and include every lower SST whose inclusive key range overlaps it.
+从底层向上计算目标大小。第一个目标为正的层是基础层；符合条件时 L0 任务直接以它为目标，并优先于基于大小的任务。对下层，计算 `current_size / target_size`，选取大于 1 的最高得分，选择最旧的上层 SST，并把每个闭区间键范围与它重叠的下层 SST 都纳入进来。
 
-Applying a result removes exactly the selected files and restores first-key ordering among the untouched and output SSTs. During manifest replay the SST objects are not open yet, so defer this sorting until their key ranges are available.
+应用结果只移除被选取的文件，并在未受触碰的 SST 与输出 SST 之间恢复第一个键顺序。回放清单（manifest）期间 SST 对象尚未打开，因此把这次排序推迟到它们的键范围可用之后。
 
-After each controller works in the simulator, integrate it with the engine. The background worker asks for a task every 50 ms, returns successfully when there is no work, compacts outside `state_lock`, and applies the result to the latest state. Extend `get` and `scan` across every lower-level sorted run using one concat iterator per run. Tiered mode instead reads tiers newest to oldest and flushes new SSTs directly into new tiers.
+每个控制器在模拟器中工作正常之后，就把它集成到引擎里。后台工作线程每 50 ms 请求一个任务，没有工作时成功返回，在 `state_lock` 之外执行压缩，并把结果应用到最新状态。把 `get` 和 `scan` 扩展到每个下层的每个有序段，每个有序段用一个 concat 迭代器。分层（tiered）模式则从新到旧读取各层（tier），并把新 SST 直接落盘到新的层。
 
-Use these simulator commands without consulting the reference implementation:
+使用以下模拟器命令，不要查阅参考实现：
 
 ```shell
 cargo run --bin compaction-simulator simple
@@ -161,56 +161,53 @@ cargo run --bin compaction-simulator tiered
 cargo run --locked --bin compaction-simulator -- leveled --seed 42
 ```
 
-The leveled simulator's seed controls its mock SST key ranges. Record the seed
-with the trace, and use the same source checkout, `Cargo.lock`, options, and
-seed for any authorized learner/reference comparison. A different seed is a
-different workload.
+分层（leveled）模拟器的种子控制它模拟的 SST 键范围。把种子与跟踪记录一起保存，并在任何获准的学习者/参考实现比较中使用相同的源码检出、`Cargo.lock`、选项和种子。不同的种子就是不同的工作负载。
 
-For at least one trace per policy, annotate the selected inputs, the reason the task fired, whether it reaches the bottom, the source that wins equal keys, and the files that remain afterward. Change one threshold and predict the next task before rerunning the simulator.
+每个策略至少对一段跟踪做标注：被选取的输入、任务触发的原因、它是否到达底部、相同键由哪个来源胜出，以及之后剩下的文件。改动一个阈值，并在重新运行模拟器之前预测下一个任务。
 
-## Checkpoint 3: Recover the Live State
+## 检查点 3：恢复有效状态
 
-Ask:
+提问：
 
-> Add the manifest and WAL so synchronized writes survive restart.
+> 加入清单（manifest）和 WAL，让已同步的写入能挺过重启。
 
-This checkpoint covers [Manifest](./week2-05-manifest.md) and [Write-Ahead Log](./week2-06-wal.md). Implement the final framed, checksummed manifest and WAL records from [Batch Write and Checksums](./week2-07-snacks.md) directly; do not first build an unframed format and replace it in the same checkpoint.
+这个检查点覆盖[清单（manifest）](./week2-05-manifest.md)和[预写日志（WAL）](./week2-06-wal.md)。直接实现[批量写与校验和](./week2-07-snacks.md)中最终带分帧和校验和的清单（manifest）与 WAL 记录；不要先做一个无分帧的格式，再在同一个检查点里替换它。
 
-First derive the required recovery behavior:
+先推导出所需的恢复行为：
 
-| Behavior to work out | Small case that exposes it |
+| 需要推导的行为 | 能暴露它的小例子 |
 | --- | --- |
-| Manifest replay | Replay a flush followed by a compaction from an empty state. |
-| New-file durability order | Crash after the SST is synced but before its manifest record. |
-| Unsafe reference order | Crash after the manifest is synced but before the SST directory entry. |
-| Obsolete-file deletion | Crash after the compaction record but before deleting its inputs. |
-| Live WAL selection | Leave `NewMemtable(7)` without a matching `Flush(7)`. |
-| WAL retirement | Leave an old WAL file after its flush record is durable. |
-| Recovered ordering | Recover several memtables whose IDs were created over time. |
-| ID allocation | Recover SST and WAL IDs with gaps and find the next unused ID. |
-| Durability boundary | Stop before and after `sync` returns. |
+| 清单回放 | 从空状态回放一次落盘，随后回放一次压缩。 |
+| 新文件持久化顺序 | 在 SST 已同步、但其清单（manifest）记录尚未写入之间崩溃。 |
+| 不安全的引用顺序 | 在清单（manifest）已同步、但 SST 目录项尚未持久化之间崩溃。 |
+| 过期文件删除 | 在压缩记录已持久化、但尚未删除其输入之间崩溃。 |
+| 有效 WAL 选择 | 留下 `NewMemtable(7)` 而缺少匹配的 `Flush(7)`。 |
+| WAL 退役 | 在落盘记录已持久化之后留下旧的 WAL 文件。 |
+| 恢复后的顺序 | 恢复若干个在不同时间创建的内存表。 |
+| ID 分配 | 恢复带空洞的 SST 和 WAL ID，并找出下一个未使用的 ID。 |
+| 持久化边界 | 分别在 `sync` 返回之前和之后停止。 |
 
-Use final record framing so recovery can locate and verify one record at a time:
+使用最终的分帧方式，使恢复能逐条定位并校验记录：
 
 ```text
 manifest: len | JSON record | checksum | len | JSON record | checksum | ...
 WAL:      key_len | key | value_len | value | checksum | ...
 ```
 
-The checksum covers the encoded record bytes, not itself. Integer byte order is part of the format. Validate lengths before slicing and verify a checksum before exposing its payload.
+校验和覆盖的是编码后的记录字节，不包括它自身。整型字节序属于格式的一部分。在切片之前校验长度，在暴露载荷之前校验和。
 
-The agent should help you place crashes after every event in a flush and predict what recovery would observe. Here are the five events — they are **not** in the safe order. Before looking at the answer, work out an order where recovery never references a missing file:
+代理应帮助你把崩溃放在一次落盘的每个事件之后，并预测恢复会观察到什么。这里有五个事件——它们**不是**按安全顺序排列的。在看答案之前，先推导出一个恢复过程永远不会引用缺失文件的顺序：
 
-- sync the directory entries
-- delete obsolete inputs
-- append and sync the manifest record
-- write and sync new SSTs
-- sync the directory again
+- 同步目录项
+- 删除过期输入
+- 追加并同步清单（manifest）记录
+- 写入并同步新的 SST
+- 再次同步目录
 
-Work through each candidate order. Place a crash after each step and describe what recovery would see: does it reference a file that was never durably created, or does it lose a file the manifest expects? Only one ordering guarantees that after every possible crash, recovery either sees the old logical state or the new logical state — never a state that requires a missing file.
+逐一推演每个候选顺序。在每一步之后放置一个崩溃，描述恢复会看到什么：它是否引用了一个从未持久创建的文件，或者是否丢失了清单（manifest）期望的文件？只有一种顺序能保证在每一种可能的崩溃之后，恢复要么看到旧的逻辑状态，要么看到新的逻辑状态——绝不会看到需要缺失文件的状态。
 
 <details>
-<summary>Safe durable order (reveal after you have a justified answer)</summary>
+<summary>安全的持久化顺序（在你给出有理有据的答案之后再展开）</summary>
 
 ```text
 write and sync new SSTs
@@ -220,17 +217,17 @@ write and sync new SSTs
   -> sync the directory again
 ```
 
-Why this order: (1) the new SST files must exist durably before anything references them; (2) the directory must reflect those files; (3) the manifest record makes the new layout the recovered truth — a crash before this step recovers the old layout, and those orphaned SSTs are harmless; (4) only after the manifest no longer references them may the obsolete inputs be deleted; (5) the final directory sync makes the deletions durable so a crash cannot resurrect deleted files after recovery replays the manifest.
+为什么是这个顺序：(1) 新的 SST 文件必须在任何东西引用它们之前就持久存在；(2) 目录必须反映出这些文件；(3) 清单（manifest）记录让新布局成为恢复时的事实——在这一步之前崩溃会恢复到旧布局，那些孤立的 SST 无害；(4) 只有在清单（manifest）不再引用它们之后，才可以删除过期的输入；(5) 最后一次目录同步让删除持久化，这样在恢复回放清单（manifest）之后，崩溃不会让已删除的文件重新出现。
 
 </details>
 
-Recovery may see the old logical state or the new logical state at some crash boundaries. It must never see a durable manifest record that requires a missing file. An unreferenced new file or an undeleted obsolete file is tolerable because neither belongs to the recovered logical state.
+在某些崩溃边界上，恢复可能看到旧的逻辑状态，也可能看到新的逻辑状态。但它绝不能看到一条要求缺失文件的持久化清单（manifest）记录。未被引用的新文件或未删除的过期文件是可以容忍的，因为两者都不属于恢复后的逻辑状态。
 
-When WALs are enabled, create the WAL, sync its directory entry, and durably record `NewMemtable(id)` before making that memtable available for writes. `sync` must flush the `BufWriter` and then call `sync_all`. A durable flush record retires the WAL logically before its filename is removed. Recovery ignores such stale files, restores live immutable memtables newest to oldest, and sets `next_sst_id` to one greater than every live SST or WAL ID.
+启用 WAL 时，先创建 WAL、同步它的目录项，并在让该内存表可用于写入之前持久化记录 `NewMemtable(id)`。`sync` 必须先 flush `BufWriter`，再调用 `sync_all`。持久化的落盘记录会在文件名被删除之前，先在逻辑上让 WAL 退役。恢复过程忽略这类过期文件，按从新到旧的顺序恢复有效的只读内存表，并把 `next_sst_id` 设为所有有效 SST 或 WAL ID 的最大值加一。
 
-Without WALs, `close` flushes every non-empty memtable. With WALs, it synchronizes them instead. In both cases, it stops and joins the background threads and remains harmless when called again.
+没有 WAL 时，`close` 会落盘每个非空内存表。有 WAL 时，它改为同步它们。两种情况都会停止并 join 后台线程，并且再次调用时不会造成损害。
 
-Reveal the manifest and WAL tests only after this checkpoint's first pass is complete:
+只有在这个检查点的第一版完成之后，才揭示清单（manifest）和 WAL 的测试：
 
 ```shell
 cargo x copy-test --week 2 --day 5
@@ -239,21 +236,21 @@ cargo test -p mini-lsm-starter week2_day5
 cargo test -p mini-lsm-starter week2_day6
 ```
 
-Before approving the checkpoint, write the event sequence for one flush and place a crash after every event. Then recover a manifest containing interleaved `NewMemtable`, `Flush`, and `Compaction` records by hand. After the focused tests pass, explain the line that prevents a manifest record from becoming durable before its new file.
+在通过这个检查点之前，写下一次落盘的事件序列，并在每个事件之后放置一个崩溃。然后手工恢复一份包含交错 `NewMemtable`、`Flush` 和 `Compaction` 记录的清单（manifest）。针对性测试通过之后，解释那行防止清单（manifest）记录在新文件之前持久化的代码。
 
-## Checkpoint 4: Reject Corrupted Data
+## 检查点 4：拒绝损坏的数据
 
-Ask:
+提问：
 
-> Add the final write-batch API and checksums to the remaining disk formats.
+> 把最终的批量写 API 和校验和加入到其余的磁盘格式中。
 
-This checkpoint finishes [Batch Write and Checksums](./week2-07-snacks.md). The supplied suite has no dedicated checksum tests, so an agent report that only says `cargo x scheck` passed is incomplete.
+这个检查点完成[批量写与校验和](./week2-07-snacks.md)。提供的测试集没有专门的校验和测试，因此只说 `cargo x scheck` 通过了的代理报告是不完整的。
 
-`put` and `delete` should delegate to `write_batch`. At this stage a batch preserves the existing per-record behavior; it does not promise transaction-like atomic visibility or durability for the entire group.
+`put` 和 `delete` 应委托给 `write_batch`。在这个阶段，一个批次保持现有的逐记录行为；它并不为整组记录承诺类事务的原子可见性或持久性。
 
-For SST data, keep the earlier block-size contract: the configured target describes block content, and the four-byte checksum is appended after it. Verify the block bytes before decoding them.
+对 SST 数据，保持此前的块大小约定：配置的目标描述块内容，四字节校验和追加在它之后。在解码块字节之前先校验它们。
 
-For each remaining section, identify its first protected byte, last protected byte, stored checksum, and framing fields:
+对每个剩余区段，指出它的第一个受保护字节、最后一个受保护字节、所存校验和，以及分帧字段：
 
 ```text
 data block | checksum
@@ -261,54 +258,54 @@ block metadata | checksum | metadata offset
 Bloom filter | checksum | Bloom offset
 ```
 
-`Bloom::encode` appends to a buffer that already contains other SST sections. Record the filter's starting offset and checksum only the bytes added for the filter. The encoder and decoder must agree on the exact range; a round-trip alone cannot detect two matching implementations that protect the wrong bytes.
+`Bloom::encode` 追加到一个已经包含其他 SST 区段的缓冲区。记录该过滤器的起始偏移，并只对为该过滤器新增的字节计算校验和。编码器和解码器必须对确切的字节范围达成一致；单靠往返测试无法发现两个都保护了错误字节的实现。
 
-For every persistent format—data block, block metadata, Bloom filter, WAL, and manifest—add or run a test that:
+对每一种持久格式——数据块、块元数据、布隆过滤器、WAL 和清单（manifest）——添加或运行一个测试，它要：
 
-1. writes a valid value and reads it back;
-2. flips one byte inside the protected payload;
-3. predicts which decoder should reject it; and
-4. checks a truncated length or checksum without silently accepting data.
+1. 写入一个有效值并读回；
+2. 翻转受保护载荷内的一个字节；
+3. 预测哪个解码器应当拒绝它；以及
+4. 检查被截断的长度或校验和，且不会静默接受数据。
 
-After implementation, have the agent point to one checksum slice boundary and ask what would happen if it included preceding bytes or excluded the final payload byte.
+实现之后，让代理指出一个校验和切片边界，并问如果它包含了前面的字节或排除了载荷的最后一个字节会发生什么。
 
-## Audit the Finished Engine
+## 审查完成的引擎
 
-Run the complete project check from the repository root:
+在仓库根目录运行完整的项目检查：
 
 ```shell
 cargo x scheck
 ```
 
-Also rerun all three compaction simulators and the corruption cases. Then ask for a final evidence report containing:
+同时重新运行三个压缩模拟器和损坏用例。然后要求一份最终证据报告，包含：
 
-1. the combined decision ledgers and delegated choices;
-2. the exact commands and outcomes;
-3. one duplicate key traced through each compaction layout;
-4. one task installation interleaved with a concurrent flush;
-5. one manifest/WAL recovery trace with crash points;
-6. the next-ID calculation for that recovered state;
-7. the exact protected byte range for every checksum; and
-8. one weakness not established by the supplied tests.
+1. 合并后的决策记录和被委托的选择；
+2. 确切的命令与结果；
+3. 一个重复键在每种压缩布局中的跟踪过程；
+4. 一次与并发落盘交错的压缩任务安装；
+5. 一条带崩溃点的清单（manifest）/WAL 恢复跟踪；
+6. 该恢复状态下下一个 ID 的计算；
+7. 每个校验和确切的受保护字节范围；以及
+8. 一个现有测试未能确立的弱点。
 
-Inspect the actual diff and outputs. Search for changed supplied tests, removed assertions, broad lint suppressions, unchecked corrupted lengths, and file deletion before the durable manifest transition.
+检查实际的 diff 和输出。查找被修改的现有测试、被删除的断言、宽泛的 lint 抑制、未校验的损坏长度，以及在持久化清单（manifest）转换之前删除文件的情况。
 
-Finally, introduce and immediately revert one deliberate fault you understand. Good examples are reversing upper/lower merge priority, marking a capped tiered task as bottom-reaching, deleting an SST before its compaction record is durable, or excluding one payload byte from a checksum. Predict the failing test or recovery trace before running it.
+最后，引入并立即回退一个你自己理解的故意故障。好的例子包括：颠倒上/下层的合并优先级、把受限制的分层（tiered）任务标记为到达底层、在压缩记录持久化之前删除 SST，或从校验和中排除载荷的一个字节。在运行之前先预测失败的测试或恢复跟踪。
 
-## Day 2 Completion Checkpoint
+## 第二天完成检查点
 
-You are ready for Day 3 when you can do these without delegating the answer back to the agent:
+当你能在不把答案推回给代理的情况下完成以下事项时，你就准备好进入第三天了：
 
-- predict the next task for simple, tiered, and leveled compaction;
-- explain why the newest version wins in every task layout;
-- decide whether a particular compaction may discard tombstones;
-- show how result installation retains a concurrent flush;
-- compare the read, write, and space costs of leveled and tiered policies;
-- replay the manifest and live WALs into one LSM state;
-- place crashes in a flush sequence and distinguish safe leftovers from missing required files;
-- state what `sync` and `close` guarantee with and without WALs; and
-- mark the exact byte range protected by every checksum and design a corruption test.
+- 为简单分层、分层（tiered）和分层（leveled）压缩预测下一个任务；
+- 解释为什么在每种任务布局中最新版本都胜出；
+- 判断某次压缩是否可以丢弃墓碑；
+- 展示结果安装如何保留一次并发落盘；
+- 比较分层（leveled）与分层（tiered）策略的读、写和空间代价；
+- 把清单（manifest）和有效 WAL 回放进同一个 LSM 状态；
+- 在一次落盘序列中放置崩溃，并区分安全的遗留物与缺失的必要文件；
+- 说明在有和没有 WAL 时 `sync` 和 `close` 各自保证什么；以及
+- 标出每个校验和保护的准确字节范围，并设计一个损坏测试。
 
-If one item is unclear, return to its original Week 2 chapter and ask the agent for a smaller file state, crash timeline, or byte layout. The goal is not merely a persistent engine. It is an engine whose background transitions and recovery story you can defend.
+如果某一项不清楚，回到它原本的第二周章节，向代理索取更小的文件状态、崩溃时间线或字节布局。目标不只是一个持久化的引擎，而是一个你能为其后台转换和恢复过程辩护的引擎。
 
 {{#include copyright.md}}

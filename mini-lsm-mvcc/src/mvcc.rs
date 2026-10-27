@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
+#![allow(unused_variables)] // TODO(you): 实现该模块后删除这条 lint
+#![allow(dead_code)] // TODO(you): 实现该模块后删除这条 lint
 
 pub mod txn;
 pub mod watermark;
@@ -63,7 +63,7 @@ impl LsmMvccInner {
         self.ts.lock().0 = ts;
     }
 
-    /// All ts (strictly) below this ts can be garbage collected.
+    /// 所有（严格）低于该 ts 的 ts 都可以被垃圾回收。
     pub fn watermark(&self) -> u64 {
         let ts = self.ts.lock();
         ts.1.watermark().unwrap_or(ts.0)

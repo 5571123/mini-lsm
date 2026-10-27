@@ -2,18 +2,18 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Storage Engine and Block Cache (Deprecated)
+# 存储引擎与块缓存（已废弃）
 
 <div class="warning">
 
-This Mini-LSM v1 chapter is no longer maintained. Its instructions have been removed because they do not match the current starter code.
+这个 Mini-LSM v1 章节已不再维护。由于其中的说明与当前的起始代码不一致，相关内容已被移除。
 
-The material now lives in:
+这些内容现在位于：
 
-- [Week 1: Memtables](./week1-01-memtable.md) for writes and mutable state
-- [Week 1: Sorted String Table (SST)](./week1-04-sst.md) for the block cache
-- [Week 1: Read Path](./week1-05-read-path.md) for point lookups and scans
-- [Week 1: Write Path](./week1-06-write-path.md) for freezing and flushing memtables
+- [第一周：内存表](./week1-01-memtable.md)，讲解写入与可变状态
+- [第一周：Sorted String Table（SST）](./week1-04-sst.md)，讲解块缓存
+- [第一周：读路径](./week1-05-read-path.md)，讲解点查与扫描
+- [第一周：写路径](./week1-06-write-path.md)，讲解内存表的冻结与落盘
 
 </div>
 

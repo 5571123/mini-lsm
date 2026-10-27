@@ -2,62 +2,62 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Snapshot Read - Engine Read Path and Transaction API
+# 快照读：引擎读路径与事务 API
 
-By the end of this chapter, you will be able to:
+本章结束时，你将能够：
 
-* Select the newest version whose timestamp is less than or equal to a transaction's read timestamp.
-* Keep a snapshot alive for the lifetime of a point read or scan iterator.
-* Recover the latest commit timestamp from durable SST and WAL state.
+* 选取时间戳小于或等于事务读时间戳的最新版本。
+* 在点查或扫描迭代器的整个生命周期内保持一个快照存活。
+* 从持久化的 SST 和 WAL 状态中恢复最新的提交时间戳。
 
-At the end of the day, your engine will be able to give the user a consistent view of the storage key space.
+在这一天结束时，你的引擎将能够给用户提供存储键空间的一致视图。
 
-During the refactor, you might need to change the signature of some functions from `&self` to `self: &Arc<Self>` as necessary.
+在重构过程中，你可能需要按需把一些函数的签名从 `&self` 改成 `self: &Arc<Self>`。
 
-To copy and run the test cases:
+复制并运行测试用例：
 
 ```
 cargo x copy-test --week 3 --day 3
 cargo x scheck
 ```
 
-**Note:** You should also pass the persistence tests from Week 2 Days 5 and 6 after finishing this chapter.
+**注意：** 完成本章之后，你也应当通过第二周第五天和第六天的持久化测试。
 
-## Before You Begin
+## 开始之前
 
-Day 2 stores a complete version history but always reads at the latest timestamp. A transaction now captures `read_ts = latest_commit_ts` when it begins and reuses that value for every read.
+第二天存储了完整的版本历史，但总是以最新时间戳读取。现在，事务在开始时捕获 `read_ts = latest_commit_ts`，并在每次读取时复用这个值。
 
-Keep these invariants in mind:
+请记住这些不变量：
 
-1. For each user key, skip versions with `ts > read_ts`, then choose the first remaining version.
-2. If the chosen version is a tombstone, the user key is absent; older values must not be returned.
-3. After deciding one user key, skip every remaining version of that key before returning the next result.
-4. A `TxnIterator` holds the transaction alive so its read timestamp remains protected for the entire scan.
-5. Recovery initializes the timestamp oracle to at least the largest timestamp in every live SST and recovered WAL-backed memtable.
+1. 对每个用户键，跳过 `ts > read_ts` 的版本，然后选择剩余的第一个版本。
+2. 如果被选中的版本是墓碑，则该用户键不存在；不得返回更旧的值。
+3. 决定完一个用户键之后，在返回下一个结果之前跳过该键的所有剩余版本。
+4. `TxnIterator` 让事务保持存活，因此它的读时间戳在整个扫描期间都受到保护。
+5. 恢复时把时间戳分配器初始化为不小于所有存活 SST 和恢复出的 WAL 内存表中的最大时间戳。
 
-> **Predict before coding:** For `a@7=del, a@5=v5, a@2=v2`, what should reads at timestamps 8, 6, 5, and 1 return? Which iterator transitions are needed to avoid resurrecting `a@5` at timestamp 8?
+> **先预测再写代码：** 对于 `a@7=del, a@5=v5, a@2=v2`，在时间戳 8、6、5 和 1 上的读操作应当分别返回什么？为避免在时间戳 8 上复活 `a@5`，需要哪些迭代器状态转移？
 
-## Task 1: LSM Iterator with Read Timestamp
+## 任务 1：带读时间戳的 LSM 迭代器
 
-The goal of this chapter is to have something like:
+本章的目标是做到类似这样：
 
 ```rust,no_run
 let snapshot1 = engine.new_txn();
-// write something to the engine
+// 向引擎写入一些数据
 let snapshot2 = engine.new_txn();
-// write something to the engine
-snapshot1.get(/* ... */); // we can retrieve a consistent snapshot of a previous state of the engine
+// 向引擎写入一些数据
+snapshot1.get(/* ... */); // 我们可以取回引擎此前某个状态的一致快照
 ```
 
-Record the latest committed timestamp when creating the transaction. A read over that transaction may inspect newer internal versions, but it must return only versions at or below the recorded timestamp.
+在创建事务时记录最新的已提交时间戳。该事务上的读操作可能看到更新的内部版本，但只能返回时间戳小于或等于所记录时间戳的版本。
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/lsm_iterator.rs
 ```
 
-To do this, you will need to record a read timestamp in `LsmIterator`.
+为此，你需要在 `LsmIterator` 中记录读时间戳。
 
 ```rust,no_run
 impl LsmIterator {
@@ -71,11 +71,11 @@ impl LsmIterator {
 }
 ```
 
-Update `LsmIterator` initialization and `next` logic to skip future versions, suppress tombstones, and return at most one result per user key.
+更新 `LsmIterator` 的初始化和 `next` 逻辑，跳过未来的版本、抑制墓碑，并且每个用户键最多返回一个结果。
 
-## Task 2: Multi-Version Scan and Get
+## 任务 2：多版本扫描与读取
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/mvcc.rs
@@ -83,65 +83,65 @@ src/mvcc/txn.rs
 src/lsm_storage.rs
 ```
 
-Now implement `scan` and `get` on `Transaction` so every operation uses the same `read_ts`.
+现在在 `Transaction` 上实现 `scan` 和 `get`，让每次操作都使用同一个 `read_ts`。
 
-We recommend you to create helper functions like `scan_with_ts(/* original parameters */, read_ts: u64)` and `get_with_ts` if necessary in your `LsmStorageInner` structure. The original get/scan on the storage engine should be implemented as creating a transaction (snapshot) and do a get/scan over that transaction. The call path would be like:
+如果需要，我们建议你在 `LsmStorageInner` 中创建辅助函数，例如 `scan_with_ts(/* 原始参数 */, read_ts: u64)` 和 `get_with_ts`。存储引擎上原有的 get/scan 应当实现为：创建一个事务（快照），然后在该事务上执行 get/scan。调用路径类似：
 
 ```
 LsmStorageInner::scan -> new_txn and Transaction::scan -> LsmStorageInner::scan_with_ts
 ```
 
-To create a transaction in `LsmStorageInner::scan`, we will need to provide a `Arc<LsmStorageInner>` to the transaction constructor. Therefore, we can change the signature of `scan` to take `self: &Arc<Self>` instead of simply `&self`, so that we can create a transaction with `let txn = self.mvcc().new_txn(self.clone(), /* ... */)`.
+要在 `LsmStorageInner::scan` 中创建事务，我们需要向事务构造函数提供一个 `Arc<LsmStorageInner>`。因此，我们可以把 `scan` 的签名从简单的 `&self` 改为接收 `self: &Arc<Self>`，这样就能用 `let txn = self.mvcc().new_txn(self.clone(), /* ... */)` 创建事务。
 
-Change `scan` to return a `TxnIterator`. The snapshot must remain live while the user consumes the scan, so `TxnIterator` stores the transaction object. The starter already exposes the final Day 5 shape, which merges a `TxnLocalIterator` with `FusedIterator<LsmIterator>`. Preserve that shape during this chapter by constructing an empty local stream; Day 5 will populate it with transaction-local writes.
+把 `scan` 改为返回 `TxnIterator`。在用户消费扫描结果期间，快照必须保持存活，因此 `TxnIterator` 存储事务对象。起始代码已经暴露了第五天的最终形态，即把 `TxnLocalIterator` 与 `FusedIterator<LsmIterator>` 合并。本章请保持这个形态，构造一个空的本地流；第五天会用事务本地的写入填充它。
 
-You do not need to implement `Transaction::put/delete` for now, and all modifications will still go through the engine.
+目前你不需要实现 `Transaction::put/delete`，所有修改仍然经过引擎。
 
-## Task 3: Store Largest Timestamp in SST
+## 任务 3：在 SST 中存储最大时间戳
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/table.rs
 src/table/builder.rs
 ```
 
-Store the largest timestamp after the block metadata and recover it when opening the SST. This summary lets startup advance the timestamp oracle without scanning every entry.
+在块元数据之后存储最大时间戳，并在打开 SST 时恢复它。这个汇总信息让启动时可以推进时间戳分配器，而不必扫描每一个条目。
 
-## Task 4: Recover Commit Timestamp
+## 任务 4：恢复提交时间戳
 
-Now that we have largest timestamp information in the SSTs and timestamp information in the WAL, we can obtain the largest timestamp committed before the engine starts, and use that timestamp as the latest committed timestamp when creating the `mvcc` object.
+现在 SST 中有最大时间戳信息，WAL 中也有时间戳信息，因此我们可以得到引擎启动前已提交的最大时间戳，并在创建 `mvcc` 对象时把它用作最新的已提交时间戳。
 
-If WAL is not enabled, you can simply compute the latest committed timestamp by finding the largest timestamp among SSTs. If WAL is enabled, you should further iterate all recovered memtables and find the largest timestamp.
+如果没有启用 WAL，你可以通过找到 SST 中的最大时间戳来计算最新的已提交时间戳。如果启用了 WAL，你还应当进一步遍历所有恢复出的内存表，找到最大时间戳。
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/lsm_storage.rs
 ```
 
-Test this path explicitly by closing and reopening a database whose largest timestamp appears first in an SST and then in an unflushed WAL-backed memtable. The first post-recovery write must receive a strictly larger timestamp.
+请显式测试这条路径：关闭并重新打开一个数据库，其最大时间戳先出现在某张 SST 中，然后出现在一个未落盘的 WAL 内存表中。恢复后的第一次写入必须获得一个严格更大的时间戳。
 
-## Chapter Checkpoint
+## 本章检查点
 
-Transactions should now retain a stable logical snapshot across later writes, flushes, compactions, and restart.
+现在事务应当在后续的写入、落盘、压缩和重启之后仍然保持一个稳定的逻辑快照。
 
-Verify these cases explicitly:
+请显式验证这些情况：
 
-1. Keep three transactions at different timestamps and compare both `get` and `scan` after overwrites and deletes.
-2. Flush and compact while the transactions remain alive, then repeat the same reads.
-3. Start a scan, commit a newer value, and continue the scan; the iterator must stay on its original read timestamp.
-4. Reopen with the maximum timestamp present in an SST and then in a WAL, and confirm that neither timestamp is reused.
+1. 让三个处于不同时间戳的事务保持存活，在覆盖写和删除之后分别比较 `get` 和 `scan` 的结果。
+2. 在事务存活期间执行落盘和压缩，然后重复同样的读操作。
+3. 启动一次扫描，提交一个更新的值，然后继续这次扫描；迭代器必须停留在它原本的读时间戳上。
+4. 用出现在某张 SST 中的最大时间戳重新打开数据库，再用出现在 WAL 中的最大时间戳重新打开一次，确认两个时间戳都不会被复用。
 
-## Test Your Understanding
+## 检验你的理解
 
-* So far, we have assumed that our SST files use a monotonically increasing id as the file name. Is it okay to use `<level>_<begin_key>_<end_key>_<max_ts>.sst` as the SST file name? What might be the potential problems with that?
-* Consider an alternative implementation of transaction/snapshot. In our implementation, we have `read_ts` in our iterators and transaction context, so that the user can always access a consistent view of one version of the database based on the timestamp. Is it viable to store the current LSM state directly in the transaction context in order to gain a consistent snapshot? (i.e., all SST ids, their level information, and all memtables + ts) What are the pros/cons with that? What if the engine does not have memtables? What if the engine is running on a distributed storage system like S3 object store?
-* Consider that you are implementing a backup utility of the MVCC Mini-LSM engine. Is it enough to simply copy all SST files out without backing up the LSM state? Why or why not?
-* Why does a tombstone selected at `read_ts` stop the search instead of allowing an older value to become visible?
-* Which object owns the lifetime of a scan's read timestamp, and what could compaction reclaim if that object were dropped too early?
-* Is the maximum timestamp among current SST entries always a durable history of every timestamp ever allocated? What additional metadata would be needed if timestamps must never be reused after all records at the maximum timestamp are garbage-collected?
+* 到目前为止，我们假定 SST 文件用单调递增的 id 作为文件名。用 `<level>_<begin_key>_<end_key>_<max_ts>.sst` 作为 SST 文件名可以吗？这可能带来什么问题？
+* 考虑事务/快照的另一种实现。在我们的实现中，迭代器和事务上下文中都有 `read_ts`，因此用户总能基于时间戳访问数据库某一版本的一致视图。直接把当前 LSM 状态存进事务上下文以取得一致快照，是否可行（即所有 SST id、它们的层信息，以及所有内存表加 ts）？这样做有什么优缺点？如果引擎没有内存表会怎样？如果引擎运行在类似 S3 对象存储的分布式存储系统上又会怎样？
+* 假设你在实现 MVCC Mini-LSM 引擎的备份工具。只把所有 SST 文件复制出去而不备份 LSM 状态，够用吗？为什么够或不够？
+* 为什么在 `read_ts` 上被选中的墓碑会终止搜索，而不是让一个更旧的值变为可见？
+* 哪个对象持有扫描读时间戳的生命周期？如果该对象被过早丢弃，压缩可能回收掉什么？
+* 当前 SST 条目中的最大时间戳，是否总是所有曾分配过的时间戳的持久化历史？如果要求在最大时间戳上的所有记录都被垃圾回收之后时间戳也绝不能被复用，还需要什么额外的元数据？
 
-Use the [Week 3 end-of-week self-check](./week3-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs. You can also discuss them in the Discord community.
+用[第三周周末自检](./week3-overview.md#end-of-week-self-check)来校准核心不变量。其余的设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载与假设。你也可以在 Discord 社区中讨论它们。
 
 {{#include copyright.md}}

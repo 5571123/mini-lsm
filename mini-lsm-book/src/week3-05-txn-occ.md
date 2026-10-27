@@ -2,73 +2,73 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Transaction Workspace and Atomic Commit
+# 事务工作区与原子提交
 
-By the end of this chapter, you will be able to:
+本章结束时，你将能够：
 
-* Maintain a private transaction workspace with read-your-writes semantics.
-* Merge local updates and tombstones with the transaction's stable engine snapshot.
-* Publish every update in a transaction with one commit timestamp and one crash-atomic WAL record.
+* 维护一个私有的、具有读己之写（read-your-writes）语义的事务工作区。
+* 把本地更新和墓碑与事务的稳定引擎快照合并。
+* 用一个提交时间戳和一条崩溃时原子的 WAL 记录发布事务中的全部更新。
 
-To copy and run the test cases:
+复制并运行测试用例：
 
 ```
 cargo x copy-test --week 3 --day 5
 cargo x scheck
 ```
 
-This chapter prepares for optimistic concurrency control; serializable conflict validation is added on Day 6.
+本章为乐观并发控制做准备；可串行化的冲突校验在第六天加入。
 
-## Before You Begin
+## 开始之前
 
-A transaction now has two sources: its private workspace and the engine snapshot at `read_ts`. The local source is newer and must win on duplicate user keys.
+现在一个事务有两个来源：它的私有工作区和 `read_ts` 上的引擎快照。本地来源更新，在用户键重复时必须优先。
 
-Keep these invariants in mind:
+请记住这些不变量：
 
-1. `get` and `scan` provide read-your-writes, including local deletions.
-2. Local entries shadow the engine snapshot but remain invisible to every other transaction until commit.
-3. Commit marks the transaction unusable before publishing any writes.
-4. Every record collected by one commit receives the same commit timestamp and remains in one memtable and WAL, even if the batch exceeds the size target.
-5. Recovery validates the complete WAL batch before applying any record, so a truncated transaction exposes no prefix.
-6. The WAL batch is appended before its entries become visible in the memtable. The latest commit timestamp is published after the batch is accepted and before fallible freeze maintenance.
+1. `get` 和 `scan` 提供读己之写，包括本地的删除。
+2. 本地条目遮住引擎快照，但在提交之前对其他任何事务都不可见。
+3. 提交时先把事务标记为不可用，然后再发布任何写入。
+4. 一次提交收集到的每条记录获得相同的提交时间戳，并留在同一个内存表和同一个 WAL 中，即使该批次超出大小目标。
+5. 恢复时先校验完整的 WAL 批次，再应用任何记录，因此一个被截断的事务不会暴露它的任何前缀。
+6. WAL 批次先追加，然后其条目才在内存表中变得可见。最新的提交时间戳在批次被接受之后、可能失败的空闲冻结维护之前发布。
 
-> **Predict before coding:** The snapshot contains `a=old,b=old`; the local workspace contains `a=new,b=del,c=new`. What should an unbounded scan return? If the process stops after writing only part of the transaction's WAL record, how many of those updates may recovery expose?
+> **先预测再写代码：** 快照包含 `a=old,b=old`；本地工作区包含 `a=new,b=del,c=new`。一次无界扫描应当返回什么？如果进程在只写完该事务 WAL 记录的一部分后就停止，恢复最多能暴露其中多少条更新？
 
-## Task 1: Local Workspace + Put and Delete
+## 任务 1：本地工作区以及 put 与 delete
 
-In this task, you will need to modify:
-
-```
-src/mvcc/txn.rs
-```
-
-You can now implement `put` and `delete` by inserting the corresponding key/value to the `local_storage`, which is a skiplist memtable without key timestamp. Note that for deletes, you will still need to implement it as inserting an empty value, instead of removing a value from the skiplist.
-
-## Task 2: Get and Scan
-
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/mvcc/txn.rs
 ```
 
-For `get`, probe local storage first and interpret an empty value as a deletion. For `scan`, implement `TxnLocalIterator` over the timestamp-free skiplist and merge it ahead of `FusedIterator<LsmIterator>`. Because the merge iterator retains tombstones, `TxnIterator` must suppress them without exposing the older engine value they shadow.
+现在你可以通过把对应的键/值插入 `local_storage` 来实现 `put` 和 `delete`，它是一个不带键时间戳的跳表内存表。注意，对于删除，你仍然需要把它实现为插入一个空值，而不是从跳表中移除一个值。
 
-## Task 3: Commit
+## 任务 2：get 与 scan
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/mvcc/txn.rs
 ```
 
-We assume that a transaction is used from one thread. As it enters commit, atomically mark it committed so later `put`, `delete`, `scan`, `get`, or repeated `commit` calls fail. Preserve the starter's method contracts unless you explicitly choose an API change: `get`, `scan`, and `commit` can return an error, while the provided `put` and `delete` signatures return `()` and therefore need a deterministic rejection such as an assertion. Do not change those two signatures merely for uniformity; supplied tests call them as non-fallible statements.
+对于 `get`，先探查本地存储，并把空值解释为删除。对于 `scan`，在不带时间戳的跳表之上实现 `TxnLocalIterator`，并把它合并在 `FusedIterator<LsmIterator>` 之前。由于归并迭代器会保留墓碑，`TxnIterator` 必须抑制它们，同时不暴露它们所遮住的更旧的引擎值。
 
-Your commit implementation should simply collect all key-value pairs from the local storage and submit a write batch to the storage engine.
+## 任务 3：提交
 
-## Task 4: Atomic WAL
+在这个任务中，你需要修改：
 
-In this task, you will need to modify:
+```
+src/mvcc/txn.rs
+```
+
+我们假定一个事务只在一个线程中使用。进入提交时，原子地把它标记为已提交，使之后的 `put`、`delete`、`scan`、`get` 或重复的 `commit` 调用失败。除非你明确选择修改 API，否则请保持起始代码的方法契约：`get`、`scan` 和 `commit` 可以返回错误，而给定的 `put` 和 `delete` 签名返回 `()`，因此需要一个确定性的拒绝方式，例如断言。不要仅仅为了统一风格就改动这两个签名；提供的测试把它们当作不会失败的语句来调用。
+
+你的提交实现应当只是从本地存储收集所有键值对，并向存储引擎提交一个写批次。
+
+## 任务 4：原子 WAL
+
+在这个任务中，你需要修改：
 
 ```
 src/wal.rs
@@ -76,7 +76,7 @@ src/mem_table.rs
 src/lsm_storage.rs
 ```
 
-One timestamp makes a completed transaction appear at once to new readers, but it does not make the transaction durable as a unit. Encode the entire transaction as one framed WAL record:
+一个时间戳让已完成的事务对新读者一次性可见，但它不会让事务作为一个整体持久化。把整个事务编码为一条成帧的 WAL 记录：
 
 ```
 |   HEADER   |                          BODY                                      |  FOOTER  |
@@ -84,42 +84,42 @@ One timestamp makes a completed transaction appear at once to new readers, but i
 | batch_size | key_len | key | ts  | value_len | value | more key-value pairs ... | checksum |
 ```
 
-`batch_size` is the byte length of the body, and `checksum` covers the complete body. Reject keys, values, or batches that do not fit their encoded length fields rather than truncating their lengths.
+`batch_size` 是正文字节的长度，`checksum` 覆盖完整的正文。对于放不进各自编码长度字段的键、值或批次，应当拒绝，而不是截断它们的长度。
 
-Implement `Wal::put_batch` and make `Wal::put` call it with a one-record batch. Recovery must validate the header, every field boundary, and the footer before applying any record. Clean EOF between frames succeeds. If the final frame ends inside its header, body, or checksum, warn, discard or truncate only that incomplete frame, and return success; earlier complete frames remain replayed. A fully present frame with a checksum mismatch or invalid nested key/value length is corruption: return an error, retain earlier validated frames, and expose none of the corrupt frame's prefix.
+实现 `Wal::put_batch`，并让 `Wal::put` 用一个单条记录的批次调用它。恢复时必须在应用任何记录之前校验头部、每个字段边界和尾部。帧之间干净的 EOF 视为成功。如果最后一帧在头部、正文或校验和中间结束，则给出警告，只丢弃或截断这个不完整的帧，并返回成功；先前完整的帧仍然会被重放。一帧完整存在但校验和不匹配或嵌套的键/值长度非法，属于损坏：返回错误，保留先前已校验的帧，并且不暴露该损坏帧的任何前缀。
 
-Implement `MemTable::put_batch` and make `MemTable::put` use it. Append the complete WAL record before inserting entries into the skiplist; otherwise an I/O error can make an update visible in memory without a durable commit.
+实现 `MemTable::put_batch`，并让 `MemTable::put` 使用它。先把完整的 WAL 记录追加进去，再把条目插入跳表；否则一次 I/O 错误可能让某条更新在内存中可见却没有持久化的提交。
 
-Submit the transaction to one memtable and one WAL before checking whether to freeze. A batch larger than the configured memtable target is allowed to exceed the target; it must not be split across WALs. Once the batch is accepted, publish its commit timestamp before fallible freeze maintenance so the timestamp cannot be reused after a maintenance error.
+在检查是否需要冻结之前，把事务提交到同一个内存表和同一个 WAL。大于配置的内存表目标的批次允许超出目标；它不得被拆分到多个 WAL 中。批次被接受之后，在可能失败的空闲冻结维护之前发布它的提交时间戳，这样在维护出错后该时间戳不会被复用。
 
-## Chapter Checkpoint
+## 本章检查点
 
-Transaction-local reads should now behave like one overlay. One commit timestamp and delayed publication give the batch atomic visibility; one validated WAL frame gives it crash atomicity during recovery; successful `sync` establishes durability.
+事务本地的读现在应当表现得像一个覆盖层。一个提交时间戳加上延迟发布，给批次带来原子可见性；一条经过校验的 WAL 帧在恢复期间给它带来崩溃原子性；成功的 `sync` 建立持久性。
 
-Verify these cases explicitly:
+请显式验证这些情况：
 
-1. Overwrite and delete keys from the snapshot, then compare local `get` with included, excluded, and unbounded scans.
-2. Confirm that another transaction cannot observe the workspace before commit and that an older transaction cannot observe it afterward.
-3. Inspect all internal records created by one commit and confirm that they have the same timestamp.
-4. Confirm that `get`, `scan`, `put`, `delete`, and a second `commit` reject use after the transaction has committed.
-5. Commit a batch larger than the memtable target and confirm that it stays in one memtable and WAL.
-6. Append one valid WAL frame, then truncate a second frame in its header, body, and checksum. Each recovery attempt must warn, succeed, replay the first frame, and expose none of the second.
-7. Corrupt the checksum or a nested length in a fully present second frame. Recovery must return an error, retain the first frame, and expose none of the corrupt frame.
+1. 对快照中的键做覆盖写和删除，然后把本地 `get` 与包含、不包含以及无界扫描的结果进行比较。
+2. 确认另一个事务在提交前无法观察该工作区，而一个更旧的事务在提交后也无法观察它。
+3. 检查一次提交创建的所有内部记录，确认它们具有相同的时间戳。
+4. 确认 `get`、`scan`、`put`、`delete` 以及第二次 `commit` 在事务提交后都会拒绝使用。
+5. 提交一个大于内存表目标的批次，确认它留在同一个内存表和同一个 WAL 中。
+6. 追加一条有效的 WAL 帧，然后分别在头部、正文和校验和处截断第二条帧。每次恢复尝试都必须给出警告、成功、重放第一条帧，并且不暴露第二条帧的任何内容。
+7. 在一帧完整存在的第二条帧中破坏校验和或某个嵌套长度。恢复必须返回错误、保留第一条帧，并且不暴露该损坏帧的任何内容。
 
-## Test Your Understanding
+## 检验你的理解
 
-* Compare this chapter's guarantees with classic snapshot isolation as defined in the Week 3 overview. Which first-committer-wins rule is not enforced if two concurrent transactions blindly write the same key? Does allowing both commits necessarily make that particular history non-serializable?
-* What if the user wants to batch import data (i.e., 1TB?) If they use the transaction API to do that, will you give them some advice? Is there any opportunity to optimize for this case?
-* Day 6 uses optimistic concurrency control: it checks for conflicts at commit instead of preventing them while the transaction runs. What locks or blocking behavior would a pessimistic design add, and how would that change abort rates and concurrency?
-* Why do a shared commit timestamp and delayed publication provide atomic visibility, while a validated WAL frame provides crash atomicity? Where does `sync` establish durability?
-* Why must WAL append happen before memtable publication? What should the caller observe if either step fails?
-* When can the engine safely check the memtable size and freeze it without splitting the transaction?
-* Should an empty transaction allocate a commit timestamp? What are the tradeoffs? This checkpoint follows the existing batch-write behavior.
+* 把本章的保证与第三周概览中定义的经典快照隔离做比较。如果两个并发事务盲目写入同一个键，哪条「先提交者胜出」规则没有被执行？允许两者都提交，是否必然使这段特定历史不可串行化？
+* 如果用户想批量导入数据（比如 1TB），会怎样？如果他们用事务 API 来做，你会给出什么建议？这种情况下有没有优化的机会？
+* 第六天使用乐观并发控制：在提交时检查冲突，而不是在事务运行期间阻止冲突。悲观的方案会增加哪些锁或阻塞行为，这会如何改变中止率和并发度？
+* 为什么共享的提交时间戳加延迟发布提供原子可见性，而经过校验的 WAL 帧提供崩溃原子性？`sync` 在哪里建立持久性？
+* 为什么 WAL 追加必须发生在内存表发布之前？如果其中任一步失败，调用方应当观察到什么？
+* 引擎何时可以在不拆分事务的前提下安全检查内存表大小并冻结它？
+* 空事务应当分配提交时间戳吗？有哪些取舍？本检查点遵循现有的批量写行为。
 
-Use the [Week 3 end-of-week self-check](./week3-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs.
+用[第三周周末自检](./week3-overview.md#end-of-week-self-check)来校准核心不变量。其余的设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载与假设。
 
-## Bonus Tasks
+## 加分任务
 
-* **Spill to Disk.** If the private workspace of a transaction gets too large, you may flush some of the data to the disk.
+* **溢写到磁盘。** 如果事务的私有工作区变得过大，你可以把其中一些数据落盘。
 
 {{#include copyright.md}}

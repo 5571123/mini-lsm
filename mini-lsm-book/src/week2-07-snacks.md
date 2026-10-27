@@ -2,59 +2,59 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Batch Write and Checksums
+# 批量写与校验和
 
 <!-- ![Chapter Overview](./lsm-tutorial/week2-07-overview.svg) -->
 
-The previous chapter completed the persistent LSM engine. This final chapter adds a small API improvement and integrity checks for every on-disk format. Welcome to Week 2 snack time!
+上一章完成了持久化的 LSM 引擎。这最后一章加入一个小幅的 API 改进，以及针对每种磁盘格式的完整性校验。欢迎来到第二周的加餐时间！
 
-By the end of this chapter, you will be able to:
+学完本章，你将能够：
 
-* Implement the batch write interface.
-* Add checksums to data blocks, SST metadata, bloom filters, manifest records, and WAL records.
-* Define the exact byte range protected by each checksum and reject corrupted input.
-* Explain why framing information is necessary for checksummed variable-length records.
+* 实现批量写接口。
+* 为数据块、SST 元数据、布隆过滤器、清单（manifest）记录和 WAL 记录加入校验和。
+* 明确每个校验和保护的字节范围，并拒绝损坏的输入。
+* 解释为什么带校验和的变长记录需要分帧信息。
 
-**Note:** The starter suite does not provide dedicated tests for this chapter. `cargo x copy-test --week 2` therefore copies Days 1 through 6; requesting `--day 7` reports that no dedicated test exists. Run every earlier test, inspect each encoded format, and add corruption cases that verify your checksum boundaries.
+**注意：** 起始测试集不为本章提供专门的测试。因此 `cargo x copy-test --week 2` 只复制第一天到第六天的测试；请求 `--day 7` 会报告不存在专门测试。请运行此前所有测试，检查每种编码格式，并添加验证校验和边界的损坏用例。
 
-## Before You Begin
+## 开始之前
 
-This chapter changes every persistent format that the earlier chapters created. A checksum is useful only when the writer and reader agree on the exact bytes it covers and the reader can locate both those bytes and the stored checksum without trusting corrupted length fields blindly.
+本章会改动此前各章创建的每一种持久格式。只有当写入方和读取方对校验和覆盖的确切字节达成一致，并且读取方能在不盲信损坏的长度字段的前提下定位这些字节和存储的校验和时，校验和才有用。
 
-Keep these invariants in mind:
+请记住这些不变量：
 
-1. `put` and `delete` delegate to `write_batch`, so the existing single-record behavior remains unchanged. This Week 2 API processes a group of records but does not yet promise transactional atomicity.
-2. A checksum is computed over the encoded bytes exactly as they appear on disk, including a consistent byte order for integer fields.
-3. Each decoder isolates the same byte range that its encoder checksummed and verifies it before decoding or exposing the protected payload.
-4. Offsets and lengths delimit variable-size sections. The checksum itself and unrelated preceding bytes are not accidentally included.
-5. Corruption produces an error rather than silently returning data. Handling torn or truncated records without panicking is a separate robustness concern to consider.
+1. `put` 和 `delete` 委托给 `write_batch`，因此现有的单记录行为保持不变。这个第二周 API 处理一组记录，但尚不承诺事务级原子性。
+2. 校验和是在编码后的字节上计算的，与它们在磁盘上的形态完全一致，包括整型字段使用一致的字节序。
+3. 每个解码器隔离出与编码器相同的字节范围，并在解码或暴露受保护的载荷之前校验它。
+4. 偏移和长度划定了变长区段的边界。校验和自身以及无关的前置字节不会被意外包含进去。
+5. 损坏会产生错误，而不是静默返回数据。处理撕裂或截断的记录而不 panic，是另一个需要考虑的健壮性问题。
 
-> **Predict before coding:** `Bloom::encode` appends a bloom filter to an SST buffer that already contains data blocks and metadata. If the checksum is computed over the entire buffer, what happens when `Bloom::decode` receives only the bloom-filter section? Which offset must the encoder remember?
+> **写代码前先预测：** `Bloom::encode` 把布隆过滤器追加到一个已经包含数据块和元数据的 SST 缓冲区。如果校验和是在整个缓冲区上计算的，当 `Bloom::decode` 只收到布隆过滤器这一段时会怎样？编码器必须记住哪个偏移？
 
-## Task 1: Write Batch Interface
+## 任务 1：批量写接口
 
-Prepare for Week 3 by adding a write-batch API. You will need to modify:
+为第三周做准备，加入批量写 API。你需要修改：
 
 ```
 src/lsm_storage.rs
 ```
 
-The user passes `write_batch` a slice of `WriteBatchRecord<T: AsRef<[u8]>>`, so keys and values may use types such as `Bytes`, `&[u8]`, or `Vec<u8>`. The two record variants are delete and put. Handle them with the same semantics as the existing `delete` and `put` methods.
+用户向 `write_batch` 传入一个 `WriteBatchRecord<T: AsRef<[u8]>>` 切片，因此键和值可以使用 `Bytes`、`&[u8]` 或 `Vec<u8>` 等类型。两种记录变体是删除和写入。请用与现有 `delete` 和 `put` 方法相同的语义处理它们。
 
-Then refactor `put` and `delete` to call `write_batch` with one record.
+然后把 `put` 和 `delete` 重构为用一条记录调用 `write_batch`。
 
-All tests from earlier chapters should continue to pass.
+此前各章的所有测试都应继续通过。
 
-## Task 2: Block Checksum
+## 任务 2：块校验和
 
-Add a checksum after each encoded data block. You will need to modify:
+在每个编码后的数据块之后加入校验和。你需要修改：
 
 ```
 src/table/builder.rs
 src/table.rs
 ```
 
-The format of the SST will be changed to:
+SST 的格式将变为：
 
 ```plaintext
 ---------------------------------------------------------------------------------------------------------------------------
@@ -65,15 +65,15 @@ The format of the SST will be changed to:
 ---------------------------------------------------------------------------------------------------------------------------
 ```
 
-Use CRC-32 through `crc32fast::hash` to checksum each encoded block.
+用 `crc32fast::hash` 计算 CRC-32，为每个编码后的块生成校验和。
 
-Normally, the configured block size includes both content and checksum. A 4,096-byte target with a four-byte checksum would therefore leave 4,092 bytes for block content. To preserve the earlier tests, Mini-LSM continues to treat the configured size as the content target and appends the checksum afterward.
+通常，配置的块大小同时包含内容和校验和。因此一个 4,096 字节的目标配四字节校验和，会给块内容留下 4,092 字节。为了保持此前测试的预期，Mini-LSM 继续把配置的大小当作内容目标，并在之后追加校验和。
 
-In `read_block`, separate the content from its checksum, verify the content, and decode it only after verification succeeds. Run every earlier test after changing the format.
+在 `read_block` 中把内容与其校验和分开，先校验内容，只有校验成功之后才解码。修改格式之后，请运行此前所有测试。
 
-## Task 3: SST Meta Checksum
+## 任务 3：SST 元数据校验和
 
-Add checksums for bloom filters and block metadata. You will need to modify:
+为布隆过滤器和块元数据加入校验和。你需要修改：
 
 ```
 src/table.rs
@@ -90,65 +90,65 @@ src/table/builder.rs
 ----------------------------------------------------------------------------------------------------------
 ```
 
-Append a checksum in `Bloom::encode` and verify it in `Bloom::decode`. Because `encode` appends to an existing buffer, record the bloom filter's starting offset and checksum only the bytes added for that filter.
+在 `Bloom::encode` 中追加校验和，并在 `Bloom::decode` 中校验它。由于 `encode` 是向已有缓冲区追加，请记录布隆过滤器的起始偏移，并只对为该过滤器新增的字节计算校验和。
 
-Then append a checksum to the block metadata. The existing block count can guide decoding; an explicit metadata length is another possible framing design.
+然后为块元数据追加校验和。已有的块数量可以用于指导解码；显式的元数据长度是另一种可行的分帧设计。
 
-## Task 4: WAL Checksum
+## 任务 4：WAL 校验和
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/wal.rs
 ```
 
-Protect each WAL record with its own checksum. You have two implementation choices:
+用各自的校验和保护每条 WAL 记录。你有两种实现选择：
 
-* Generate a buffer of the key-value record, and use `crc32fast::hash` to compute the checksum at once.
-* Write one field at a time (e.g., key length, key slice), and use a `crc32fast::Hasher` to compute the checksum incrementally on each field.
+* 生成键值记录的缓冲区，用 `crc32fast::hash` 一次性计算校验和。
+* 逐个字段写入（例如键长度、键切片），用 `crc32fast::Hasher` 在每个字段上增量计算校验和。
 
-Choose whichever approach makes the protected byte range clearest. Both methods must produce the same checksum: incremental hashing must feed the exact encoded bytes in their on-disk byte order. The new WAL encoding is:
+选择能让受保护字节范围最清楚的方案。两种方法必须产生相同的校验和：增量哈希必须按磁盘上的字节序输入确切的编码字节。新的 WAL 编码是：
 
 ```
 | key_len | key | value_len | value | checksum |
 ```
 
-## Task 5: Manifest Checksum
+## 任务 5：清单校验和
 
-Finally, protect each manifest record. Unlike the WAL, the Day 5 manifest did not store record lengths. Add a length header before each JSON record and a checksum after it.
+最后，保护每条清单（manifest）记录。与 WAL 不同，第五天的清单（manifest）不保存记录长度。请在每条 JSON 记录之前加入长度头，之后加入校验和。
 
-The new manifest format is like:
+新的清单（manifest）格式如下：
 
 ```
 | len | JSON record | checksum | len | JSON record | checksum | len | JSON record | checksum |
 ```
 
-After implementing every format change, run all previous tests and your own corruption cases.
+实现所有格式改动之后，运行此前所有测试以及你自己的损坏用例。
 
-## Chapter Checkpoint
+## 本章检查点
 
-All earlier behavior should still pass after the format changes. In addition, every persistent section should round-trip successfully and fail verification when one protected byte is changed. Confirm that appending a bloom filter or metadata section to a non-empty buffer does not make its checksum depend on preceding sections.
+格式改动之后，此前所有行为都应仍然通过。此外，每个持久化区段都应能成功往返，并在受保护的某个字节被改动时校验失败。确认向非空缓冲区追加布隆过滤器或元数据区段时，其校验和不依赖于前面的区段。
 
-Build a small SST and identify every offset, length, payload, and checksum by byte range. Do the same for one WAL and one manifest record. For each format, flip a payload byte and predict which decoder reports the error. Also consider a truncated length or checksum and decide whether your decoder returns an error or panics.
+构造一个小的 SST，按字节范围指出每个偏移、长度、载荷和校验和。对一条 WAL 和一条清单（manifest）记录做同样的事。对每种格式，翻转一个载荷字节，并预测哪个解码器会报告错误。同时考虑截断的长度或校验和，判断你的解码器是返回错误还是 panic。
 
-## Test Your Understanding
+## 检验你的理解
 
-### Correctness and Corruption
+### 正确性与损坏
 
-* Does `write_batch` in this chapter provide atomic visibility or durability for the whole batch? What additional synchronization would be needed to make that guarantee?
-* Why must an incremental WAL checksum hash the encoded byte order of each length rather than the integer's native in-memory representation?
-* For every SST checksum, identify the first protected byte, the last protected byte, and the location of the stored checksum.
-* What happens if corruption changes a length or offset before the decoder has located the protected payload? How can a decoder validate bounds before slicing?
-* Is it okay to put all block checksums together at the end of the SST file instead of storing each checksum with its block? Why or why not?
+* 本章的 `write_batch` 是否为整批提供原子可见性或持久性？要提供这个保证还需要哪些额外的同步？
+* 为什么增量计算的 WAL 校验和必须哈希每个长度编码后的字节序，而不是整数在内存中的原生表示？
+* 对每个 SST 校验和，指出第一个受保护的字节、最后一个受保护的字节，以及所存校验和的位置。
+* 如果在解码器定位到受保护载荷之前，损坏改变了某个长度或偏移，会发生什么？解码器如何在切片之前校验边界？
+* 把所有块校验和集中放在 SST 文件末尾，而不是让每个校验和与它的块放在一起，这样做可以吗？为什么？
 
-### API and Design
+### API 与设计
 
-* Consider the case that an LSM storage engine only provides `write_batch` as the write interface (instead of single put + delete). Is it possible to implement it as follows: there is a single write thread with an mpsc channel receiver to get the changes, and all threads send write batches to the write thread. The write thread is the single point to write to the database. What are the pros/cons of this implementation? (Congrats if you do so you get BadgerDB!)
+* 考虑 LSM 存储引擎只提供 `write_batch` 作为写接口（而不是单独的 put 加 delete）的情况。是否可以实现为：只有一个写线程，它有个 mpsc channel 接收端用来获取变更，所有线程把批量写发送给这个写线程，由该写线程作为写数据库的唯一入口？这种实现有哪些优缺点？（如果你这么做，恭喜你得到了 BadgerDB！）
 
-Use the [Week 2 end-of-week self-check](./week2-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs. You can also discuss them in the Discord community.
+用[第二周周末自检](./week2-overview.md#end-of-week-self-check)校验核心不变量。其余设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载和假设。你也可以在 Discord 社区讨论。
 
-## Bonus Tasks
+## 附加任务
 
-* **Recovering from Corruption.** If a checksum fails, open the database in a read-only safe mode that can retrieve unaffected data.
+* **从损坏中恢复。** 如果校验和失败，以只读安全模式打开数据库，以便取回未受影响的数据。
 
 {{#include copyright.md}}

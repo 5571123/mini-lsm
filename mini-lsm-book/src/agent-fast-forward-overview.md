@@ -2,29 +2,29 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Mini-LSM with Coding Agents
+# 使用编码智能体的 Mini-LSM
 
-This is a three-day guided track for students who intend to use a coding agent. The agent will write much of the code, but it must not silently design the system for you. You will reason about concrete examples, the agent will turn a few accepted decisions into a small code change, and tests will challenge your shared model.
+这是一条为期三天、面向打算使用编码智能体的学生的引导路线。智能体会写出大部分代码，但它不得在你不察觉的情况下替你设计系统。你来推理具体的例子，智能体把少量被接受的决策变成一小处代码改动，测试则挑战你们共同的理解。
 
-All three guided days are available.
+三天引导内容均已提供。
 
-The goal is not to finish with the fewest prompts. It is to finish able to explain, test, and change the system the agent helped you build.
+目标不是用最少的提示词完成任务。目标是完成之后，你能够解释、测试并改动智能体帮你构建的系统。
 
-| Guided day | Original course material | Outcome |
+| 引导日 | 原始课程材料 | 成果 |
 | --- | --- | --- |
-| [Day 1](./week1-fast-forward.md) | Mini-LSM | A working storage engine with memtables, SSTs, reads, writes, and flushes. |
-| [Day 2](./week2-fast-forward.md) | Compaction and persistence | Background compaction, restart recovery, and checksummed disk formats. |
-| [Day 3](./week3-fast-forward.md) | MVCC and transactions | Stable snapshots, atomic commits, safe version reclamation, and point-key serializable validation. |
+| [第 1 天](./week1-fast-forward.md) | Mini-LSM | 一个能工作的存储引擎，具备内存表、SST、读取、写入和落盘。 |
+| [第 2 天](./week2-fast-forward.md) | 压缩与持久化 | 后台压缩、重启恢复，以及带校验和的磁盘格式。 |
+| [第 3 天](./week3-fast-forward.md) | MVCC 与事务 | 稳定的快照、原子提交、安全的版本回收，以及点键的可串行化校验。 |
 
-The original chapters remain a reference library. This track changes the pacing and the student's role; it does not remove the need to understand ordering, representation, concurrency, and failure modes.
+原有的章节仍然是参考资料库。这条路线改变的是节奏和学生的角色；它并不减少理解顺序、表示、并发和故障模式的必要性。
 
-## Prepare the Repository and the Agent
+## 准备仓库与智能体
 
-Do all repository-wide preparation before beginning Day 1, then start the agent from the starter directory—not from the repository root.
+在开始第 1 天之前完成所有仓库级别的准备，然后从起始目录、而不是仓库根目录启动智能体。
 
-### 1. Install the Toolchain and Course Tools
+### 1. 安装工具链与课程工具
 
-Install Rust with [rustup](https://rustup.rs) if it is not already available. Then clone the repository and install the tools used by the course:
+如果还没有安装 Rust，先用 [rustup](https://rustup.rs) 安装。然后克隆仓库并安装课程使用的工具：
 
 ```shell
 git clone https://github.com/skyzh/mini-lsm
@@ -32,112 +32,112 @@ cd mini-lsm
 cargo x install-tools
 ```
 
-The repository pins its Rust toolchain in `rust-toolchain.toml`, so Cargo will select it automatically when Rust is managed by `rustup`.
+仓库在 `rust-toolchain.toml` 中钉住了它的 Rust 工具链，因此当 Rust 由 `rustup` 管理时，Cargo 会自动选择它。
 
-If you already have the repository and tools, update your checkout as appropriate and begin from the repository root.
+如果你已经有仓库和工具，按需更新你的检出，并从仓库根目录开始。
 
-### 2. Start the Agent from `mini-lsm-starter`
+### 2. 从 `mini-lsm-starter` 启动智能体
 
-Change into the starter directory before launching your coding agent:
+在启动编码智能体之前切换到起始目录：
 
 ```shell
 cd mini-lsm-starter
 pwd
-# Start your coding agent here using the command for your tool.
+# 在这里用你所用工具对应的命令启动编码智能体。
 ```
 
-The final component of `pwd` should be `mini-lsm-starter`. This matters because repository-aware agents discover the `AGENTS.md` in this directory and begin with the starter as their working scope.
+`pwd` 的最后一段应当是 `mini-lsm-starter`。这一点很重要，因为能感知仓库的智能体会发现该目录中的 `AGENTS.md`，并以起始代码作为工作范围。
 
-Starting there is not a security sandbox: an agent can still traverse to a parent directory if instructed. The local `AGENTS.md` therefore prohibits reading, searching, diffing, or copying `../mini-lsm` and `../mini-lsm-mvcc`, including attempts to reconstruct a solution through Git history or an online copy. The only Week 3 exceptions are the exact course commands that copy the provided key module and tests into the starter; the agent may read the destinations afterward, never the sources.
+从这里启动并不是一个安全沙箱：只要被指示，智能体仍然可以向上遍历到父目录。因此本地 `AGENTS.md` 禁止读取、搜索、比较或复制 `../mini-lsm` 和 `../mini-lsm-mvcc`，包括通过 Git 历史或在线副本重建答案的尝试。第三周唯一的例外是把提供的键模块和测试复制进起始代码的确切课程命令；之后智能体可以读取目标位置，绝不能读取来源。
 
-Do not open the whole repository as the agent's workspace if your tool lets you choose a directory. The agent may consult starter interfaces, Rust documentation, and course chapters under `../mini-lsm-book/src/`. It may consult a copied test only after finishing an independent first-pass implementation of that test's checkpoint.
+如果你的工具允许选择目录，不要把整个仓库作为智能体的工作区。智能体可以查阅起始代码的接口、Rust 文档，以及 `../mini-lsm-book/src/` 下的课程章节。只有在完成某个测试对应检查点的独立第一版实现之后，它才可以查阅复制来的该测试。
 
-### 3. Verify the Instructions Before Coding
+### 3. 写代码之前先验证指令
 
-Do not assume the tool discovered `AGENTS.md`. Make the first prompt a handshake that performs no implementation:
+不要假定工具已经发现了 `AGENTS.md`。把第一次提示做成一次不做任何实现的确认：
 
-> Before editing anything, confirm that your working directory is `mini-lsm-starter` and read `./AGENTS.md`. Summarize its reference-solution boundaries, narrow Week 3 copy exceptions, test protections, and student-owned design protocol. Explain which choices require a stop and which mechanical coding choices do not. Tell me which local sources you may use, then stop without changing files.
+> 在编辑任何内容之前，确认你的工作目录是 `mini-lsm-starter`，并阅读 `./AGENTS.md`。概述其中的参考实现边界、第三周的窄范围复制例外、测试保护规则，以及学生主导的设计流程。解释哪些选择需要停下来确认，哪些机械性的编码选择不需要。告诉我你可以使用哪些本地来源，然后停下来，不要改动文件。
 
-If the response omits the reference-solution boundary, test protection, or one-decision-at-a-time stop, correct the agent before continuing. If the tool cannot load repository instructions automatically, paste `AGENTS.md` into its persistent project instructions.
+如果回答遗漏了参考实现边界、测试保护规则，或「一次只做一个决策」的停顿，先纠正智能体再继续。如果工具无法自动加载仓库指令，请把 `AGENTS.md` 粘贴到它的持久项目指令中。
 
-## The Design-and-Test Loop
+## 设计与测试循环
 
-Begin a checkpoint with an ordinary capability request:
+用一个普通的能力请求开始一个检查点：
 
-> Implement block format.
+> 实现块格式。
 
-That prompt authorizes the learning process, not a one-shot patch. The agent should inspect allowed context and ask its first design question. It should not return a complete design, edit code, or run ahead to a passing suite.
+这个提示授权的是学习过程，而不是一次性的补丁。智能体应当检查允许的上下文，并提出它的第一个设计问题。它不应给出完整的设计、编辑代码，或抢跑直到测试套件通过。
 
-Repeat this loop:
+重复这个循环：
 
-1. **Agent gives one short stop.** It starts with a concrete example, labels the question **Course rule** or **Your choice**, and asks you to choose or predict in plain English.
-2. **Student reasons.** State a choice and why. A prediction is useful even when you are uncertain.
-3. **Agent checks the reasoning.** It connects the answer to interfaces, prose, or already-revealed tests. If the answer violates a constraint, it shows the evidence and asks again instead of silently overriding you.
-4. **Agent records the choice.** The accepted answer enters a short decision ledger.
-5. **Agent implements one slice independently.** Once enough decisions specify a coherent slice, it previews the files, behavior, and later validation target and waits for your authorization. It completes a compiling first pass without copying or inspecting the supplied tests.
-6. **Reveal tests after the checkpoint.** Once the checkpoint's first pass is complete, copy its test module and run the focused check. The implementation comes from the specification and accepted decisions; the test is new evidence rather than a design source.
-7. **Student diagnoses product failures.** The agent explains the test's setup, expected result, observed result, and implicated invariant, then asks you to identify the likely bad execution path. It does not investigate the implementation or propose a fix before your attempt. Test-harness and environmental failures remain the agent's responsibility.
-8. **Student reviews.** Inspect the diff and test output before authorizing a diagnosed fix or the next slice.
+1. **智能体给出一个简短的决策卡点。** 它从一个具体例子开始，把问题标记为**课程规则**或**你的选择**，并要求你用平实的语言选择或预测。
+2. **学生推理。** 说出一个选择及其理由。即使你不确定，预测也是有价值的。
+3. **智能体检查推理。** 它把答案与接口、文档或已经揭示的测试联系起来。如果答案违反某项约束，它给出证据并再次提问，而不是悄悄覆盖你。
+4. **智能体记录选择。** 被接受的答案进入一份简短的决策台账。
+5. **智能体独立实现一个切片。** 一旦足够的决策确定了一个自洽的切片，它就预览文件、行为以及之后的验证目标，并等待你的授权。它在不复制、不查看提供的测试的情况下完成一个可编译的第一版。
+6. **检查点之后揭示测试。** 检查点的第一版完成之后，复制它的测试模块并运行针对性检查。实现来自规格与被接受的决策；测试是新的证据，而不是设计来源。
+7. **学生诊断产品故障。** 智能体解释测试的搭建、预期结果、观察到的结果以及涉及的不变量，然后请你指出可能的错误执行路径。在你的尝试之前，它不调查实现，也不提出修复方案。测试框架与环境故障仍由智能体负责。
+8. **学生审查。** 在授权一个已诊断的修复或下一个切片之前，检查 diff 和测试输出。
 
-The agent must stop on topics that affect behavior or understanding: representation, ordering, ownership, size and boundary accounting, seek behavior, errors, synchronization, and where an optimization belongs. Some answers are course rules to derive; others are genuine choices. It need not interrupt you over a local variable name, import order, formatting, or an obvious compiler-directed repair.
+智能体必须在影响行为或理解的议题上停下来：表示、顺序、所有权、大小与边界核算、查找行为、错误、同步，以及某个优化应当放在哪里。有些答案是待推导的课程规则；另一些是真正的选择。它不必为了一个局部变量名、import 顺序、格式，或明显的编译器驱动的修补而打断你。
 
-The distinction keeps the conversation educational without turning every keystroke into ceremony.
+这个区分让对话保持教学意义，同时不会把每一次按键都变成仪式。
 
-At any stop, you can answer with one of these commands:
+在任何决策卡点上，你都可以用下列命令之一作答：
 
-- `simpler` — ask the same question with shorter sentences and less terminology;
-- `example` — show the smallest concrete example that exposes the behavior;
-- `hint` — reveal one useful fact, then let you try again; or
-- `choose for me` — let the agent decide this one, explain why, and record it as delegated.
+- `simpler` —— 用更短的句子、更少的术语重问同一个问题；
+- `example` —— 给出暴露该行为的最小具体例子；
+- `hint` —— 揭示一个有用的事实，然后让你再试一次；或者
+- `choose for me` —— 让智能体决定这一个，解释原因，并把它记录为委托决策。
 
-Here is the intended shape of a stop:
+下面是决策卡点应有的形态：
 
-> **Course rule — Which value should be visible?**
+> **课程规则 —— 哪个值应当可见？**
 >
-> We write `cat = old`, freeze that memory table, then write `cat = new`.
+> 我们写入 `cat = old`，冻结那个内存表，然后写入 `cat = new`。
 >
-> What should `get("cat")` return, and why?
+> `get("cat")` 应当返回什么，为什么？
 >
-> You can reply `simpler`, `example`, `hint`, or `choose for me`.
+> 你可以回复 `simpler`、`example`、`hint` 或 `choose for me`。
 
-After you answer, the agent can name the general rule—here, newest-value precedence—and connect it to the implementation. A question should teach the terminology, not require you to decode it before you can begin.
+在你回答之后，智能体可以给出一条通用规则（这里是「最新的值优先」），并把它与实现联系起来。一个问题应当教你术语，而不是要求你先解码术语才能开始。
 
-## Keep a Decision Ledger
+## 维护决策台账
 
-Ask the agent to maintain this table during each checkpoint:
+在每个检查点期间要求智能体维护这张表：
 
-| Decision or constraint | Student's conclusion | Invariant or evidence | Consequence |
+| 决策或约束 | 学生的结论 | 不变量或证据 | 后果 |
 | --- | --- | --- | --- |
-| Example: exact-size block | Accept it | The limit is inclusive | Reject only when projected size is greater than the target. |
+| 例子：恰好等于上限的块 | 接受 | 该上限是包含的 | 只有当预计大小大于目标时才拒绝。 |
 
-The ledger makes hidden assumptions reviewable. It also prevents a required course constraint from being presented as a free preference, and lets you distinguish a coding bug from code that faithfully implements a bad decision.
+台账让隐含的假设可被审查。它也防止把一项必需的课程约束呈现为自由偏好，并让你区分编码错误与忠实实现了错误决策的代码。
 
-You can delegate a decision when it is not where you want to spend learning time:
+当某个决策不是你希望投入学习时间的地方时，你可以委托它：
 
-> Choose this one for me, explain the tradeoff, and record it as delegated. Continue asking me about the remaining decisions.
+> 这一个替我选，解释取舍，并记录为委托决策。其余决策继续问我。
 
-Delegating one choice is not permission for the agent to decide the rest.
+委托一个选择并不等于许可智能体决定其余的。
 
-## Review a Code Slice
+## 审查一个代码切片
 
-Before each edit, the agent should state:
+每次编辑之前，智能体应当说明：
 
-- which accepted decisions determine the slice;
-- which files and observable behavior will change; and
-- which supplied test module will be revealed after the independent first pass.
+- 哪些被接受的决策决定了这个切片；
+- 哪些文件和可观察行为会改变；以及
+- 独立第一版完成之后将揭示哪个提供的测试模块。
 
-Non-test compiler and formatter feedback may be used during implementation. Do not run, copy, or inspect the supplied behavioral tests until the checkpoint is implemented end to end. This prevents the agent from reconstructing the implementation one assertion at a time while still making the tests available as independent evidence.
+实现过程中可以使用编译器与格式化工具的非测试反馈。在检查点端到端实现之前，不要运行、复制或查看提供的行为测试。这可以防止智能体逐条断言地重建实现，同时仍然让测试作为独立证据可用。
 
-When a newly revealed product-behavior test fails, the agent may read the test and report what it does. It should not trace the implementation, identify the faulty line, propose a patch, or silently repair the failure. First ask the student to connect the failure to the decision ledger and propose a diagnosis. After the student reaches or accepts a diagnosis, the agent may implement an authorized fix and rerun the test. The agent should handle broken test commands, missing tools, dependency problems, and other harness failures directly.
+当新揭示的产品行为测试失败时，智能体可以阅读该测试并报告它做了什么。它不应追踪实现、定位出错的行、提出补丁，或悄悄修好这个失败。先让学生把失败与决策台账联系起来并提出诊断。学生得出或接受一个诊断之后，智能体才可以实现被授权的修复并重新运行测试。损坏的测试命令、缺失的工具、依赖问题和其他测试框架故障应当由智能体直接处理。
 
-After the edit, require the exact command and result, then ask:
+编辑之后，要求给出确切的命令和结果，然后提问：
 
-> Treat this slice as untrusted. Connect the changed behavior to the decision ledger and supplied tests. Identify one plausible bug that could still pass, propose the smallest adversarial check, and ask me to predict its outcome before adding it.
+> 把这个切片当作不可信的。把改变的行为与决策台账和提供的测试联系起来。找出一个仍然可能通过的可疑缺陷，提出最小的对抗性检查，并在加入之前让我预测它的结果。
 
-The agent should also point to one important changed line and ask: “What is this line trying to do, and what behavior might break if it changed?” The purpose is to connect a decision to code, not to quiz you on arbitrary syntax.
+智能体还应当指出一处重要的被改动行，并问：「这一行想做什么，如果改动它可能破坏什么行为？」目的是把决策与代码联系起来，而不是考查你任意的语法。
 
-Do not let “all tests pass” end the review. Conversely, once the contract and adversarial checks are satisfied, continue to the next unresolved decision instead of inventing unrelated refactors.
+不要让「所有测试通过」结束审查。反过来，一旦契约和对抗性检查都得到满足，就继续处理下一个尚未确定的决策，而不是发明无关的重构。
 
-When the workspace is prepared and the instruction handshake succeeds, continue to [Day 1 - Mini-LSM](./week1-fast-forward.md).
+工作区准备就绪、指令确认成功之后，继续看[第 1 天：构建存储引擎](./week1-fast-forward.md)。
 
 {{#include copyright.md}}

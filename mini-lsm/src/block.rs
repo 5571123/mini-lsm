@@ -22,8 +22,7 @@ pub use iterator::BlockIterator;
 
 pub(crate) const SIZEOF_U16: usize = std::mem::size_of::<u16>();
 
-/// A block is the smallest unit of read and caching in LSM tree. It is a collection of sorted
-/// key-value pairs.
+/// 块（block）是 LSM 树中读取和缓存的最小单位。它是一组有序的键值对。
 pub struct Block {
     pub(crate) data: Vec<u8>,
     pub(crate) offsets: Vec<u16>,
@@ -36,7 +35,7 @@ impl Block {
         for offset in &self.offsets {
             buf.put_u16(*offset);
         }
-        // Adds number of elements at the end of the block
+        // 在块的末尾写入元素个数
         buf.put_u16(offsets_len as u16);
         buf.into()
     }
@@ -46,7 +45,7 @@ impl Block {
     }
 
     pub(crate) fn decode_checked(data: &[u8]) -> Result<Self> {
-        // get number of elements in the block
+        // 读取块中元素个数
         ensure!(data.len() >= SIZEOF_U16, "block footer is truncated");
         let entry_offsets_len =
             u16::from_be_bytes([data[data.len() - 2], data[data.len() - 1]]) as usize;
@@ -60,7 +59,7 @@ impl Block {
         ensure!(footer_size <= data.len(), "block offset table is truncated");
         let data_end = data.len() - footer_size;
         let offsets_raw = &data[data_end..data.len() - SIZEOF_U16];
-        // get offset array
+        // 读取偏移数组
         let offsets: Vec<u16> = offsets_raw
             .chunks(SIZEOF_U16)
             .map(|x| u16::from_be_bytes([x[0], x[1]]))
@@ -113,7 +112,7 @@ impl Block {
                 .context("block value length overflow")?;
             ensure!(entry_len == entry.len(), "block value length is invalid");
         }
-        // retrieve data
+        // 取出数据部分
         let data = data[0..data_end].to_vec();
         Ok(Self { data, offsets })
     }

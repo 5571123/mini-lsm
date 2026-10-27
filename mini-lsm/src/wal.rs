@@ -14,7 +14,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::hash::Hasher;
-use std::io::{BufWriter, Read, Write};
+use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -45,11 +45,16 @@ impl Wal {
 
     pub fn recover(path: impl AsRef<Path>, skiplist: &SkipMap<Bytes, Bytes>) -> Result<Self> {
         let path = path.as_ref();
-        let mut file = OpenOptions::new()
-            .read(true)
-            .append(true)
-            .open(path)
-            .context("failed to recover from WAL")?;
+        let mut options = OpenOptions::new();
+        options.read(true);
+        // Unix 用 O_APPEND 保证追加写的原子性。Windows 下 O_APPEND 会去掉 FILE_WRITE_DATA 权限，
+        // 导致下面截断损坏尾部时 `set_len` 报「拒绝访问」，因此改用读写方式打开，
+        // 读完后再把游标移到文件末尾，让后续写入仍然表现为追加。
+        #[cfg(unix)]
+        options.append(true);
+        #[cfg(not(unix))]
+        options.write(true);
+        let mut file = options.open(path).context("failed to recover from WAL")?;
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)?;
         let mut valid_len = 0usize;
@@ -104,6 +109,8 @@ impl Wal {
             file.sync_all()
                 .context("failed to sync truncated WAL tail")?;
         }
+        // 把游标放回文件末尾：Unix 下 O_APPEND 会忽略游标，Windows 下则靠它实现追加写。
+        file.seek(SeekFrom::End(0))?;
         Ok(Self {
             file: Arc::new(Mutex::new(BufWriter::new(file))),
         })
@@ -125,13 +132,13 @@ impl Wal {
         buf.put_u16(value_len);
         buf.put_slice(value);
         hasher.write(value);
-        // add checksum: week 2 day 7
+        // 追加校验和：week 2 day 7
         buf.put_u32(hasher.finalize());
         file.write_all(&buf)?;
         Ok(())
     }
 
-    /// Implement this in week 3, day 5; if you want to implement this earlier, use `&[u8]` as the key type.
+    /// 在 week 3, day 5 实现这个方法；如果想提前实现，可以先把键类型写成 `&[u8]`。
     pub fn put_batch(&self, _data: &[(KeySlice, &[u8])]) -> Result<()> {
         unimplemented!()
     }

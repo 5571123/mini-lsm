@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#![allow(unused_variables)] // TODO(you): remove this lint after implementing this mod
-#![allow(dead_code)] // TODO(you): remove this lint after implementing this mod
+#![allow(unused_variables)] // TODO(you): 实现该模块后删除此 lint
+#![allow(dead_code)] // TODO(you): 实现该模块后删除此 lint
 
 mod leveled;
 mod simple_leveled;
@@ -111,14 +111,13 @@ impl CompactionController {
 
 #[derive(Debug, Clone)]
 pub enum CompactionOptions {
-    /// Leveled compaction with partial compaction + dynamic level support (= RocksDB's Leveled
-    /// Compaction)
+    /// leveled 压缩，支持部分压缩与动态层数（等价于 RocksDB 的 Leveled Compaction）
     Leveled(LeveledCompactionOptions),
-    /// Tiered compaction (= RocksDB's universal compaction)
+    /// tiered 压缩（等价于 RocksDB 的 universal compaction）
     Tiered(TieredCompactionOptions),
-    /// Simple leveled compaction
+    /// 简单 leveled 压缩
     Simple(SimpleLeveledCompactionOptions),
-    /// In no compaction mode (week 1), always flush to L0
+    /// 无压缩模式（Week 1），总是落盘到 L0
     NoCompaction,
 }
 

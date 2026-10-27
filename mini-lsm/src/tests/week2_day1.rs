@@ -46,7 +46,7 @@ fn test_task1_full_compaction_all_tombstones() {
 
 #[test]
 fn test_task1_full_compaction() {
-    // We do not use LSM iterator in this test because it's implemented as part of task 3
+    // 本测试不使用 LSM 迭代器，因为它由任务 3 实现
     let dir = tempdir().unwrap();
     let storage =
         Arc::new(LsmStorageInner::open(&dir, LsmStorageOptions::default_for_week1_test()).unwrap());

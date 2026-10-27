@@ -2,18 +2,18 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Leveled Compaction Strategy
+# 分层（leveled）压缩策略
 
-![Chapter Overview](./lsm-tutorial/week2-04-leveled.svg)
+![本章概览](./lsm-tutorial/week2-04-leveled.svg)
 
-By the end of this chapter, you will be able to:
+学完本章，你将能够：
 
-* Implement dynamic leveled compaction and simulate it with the compaction simulator.
-* Select a base level, rank overfull levels, and compact one upper-level SST with all overlapping lower-level SSTs.
-* Incorporate leveled compaction into the engine's read and compaction paths.
-* Explain why normal execution and manifest recovery require different result-application steps.
+* 实现动态分层（leveled）压缩，并用压缩模拟器模拟它。
+* 选定基础层、给超标的层排序，并把一个上层 SST 与所有键范围重叠的下层 SST 一起压缩。
+* 把分层（leveled）压缩纳入引擎的读路径和压缩路径。
+* 解释为什么正常执行与清单（manifest）恢复需要不同的结果应用步骤。
 
-To copy the test cases into the starter code and run them:
+把测试用例复制到起始代码并运行：
 
 ```
 cargo x copy-test --week 2 --day 4
@@ -22,86 +22,82 @@ cargo x scheck
 
 <div class="warning">
 
-Read the [Week 2 overview](./week2-overview.md) before beginning this chapter for an introduction to compaction and amplification.
+开始本章之前，请先读[第二周概览](./week2-overview.md)，了解压缩与放大的背景。
 
 </div>
 
-## Before You Begin
+## 开始之前
 
-Simple leveled compaction established the basic level structure, but it rewrites whole levels and moves new data through levels whose target size is zero. This chapter makes both task selection and result application depend on SST sizes and key ranges.
+简单分层压缩建立了基本的层结构，但它重写整个层，并让新数据穿过目标大小为零的层。本章让任务选择和结果应用都取决于 SST 大小和键范围。
 
-Keep these invariants in mind:
+请记住这些不变量：
 
-1. L0 may overlap and is ordered newest to oldest. Every lower level is sorted by first key and contains non-overlapping SST ranges.
-2. The first level with a positive target size is the base level. L0 compaction targets it directly and has priority over size-based tasks.
-3. A non-L0 task selects exactly one upper-level SST and every lower-level SST whose inclusive key range overlaps it.
-4. The upper source is newer and wins duplicate keys. Tombstones are discarded only when the lower level is the bottom-most level.
-5. Applying the result removes exactly the selected files and restores first-key order in the lower level. During manifest replay, the SST objects are not loaded yet, so sorting must be deferred until recovery opens them.
+1. L0 可以重叠，并从新到旧排列。下面的每一层都按第一个键排序，且包含范围互不重叠的 SST。
+2. 第一个目标大小为正的层是基础层。L0 压缩直接以它为目标，并且优先于基于大小的任务。
+3. 非 L0 任务只选取一个上层 SST，以及每个闭区间键范围与它重叠的下层 SST。
+4. 上层来源更新，遇到重复键时胜出。只有当下层是最底层时才丢弃墓碑（tombstone）。
+5. 应用结果只移除被选取的文件，并恢复下层的第一个键顺序。回放清单（manifest）时 SST 对象尚未加载，因此排序必须推迟到恢复过程打开它们之后。
 
-> **Predict before coding:** The selected upper SST covers `[100, 200]`; the lower level contains `[50, 99]`, `[100, 150]`, `[151, 250]`, and `[251, 300]`. Which lower SSTs belong in the task? If the task is being replayed from the manifest before SST metadata is loaded, when can the output files be sorted by first key?
+> **写代码前先预测：** 被选取的上层 SST 覆盖 `[100, 200]`；下层包含 `[50, 99]`、`[100, 150]`、`[151, 250]` 和 `[251, 300]`。哪些下层 SST 属于该任务？如果该任务是在 SST 元数据加载之前从清单（manifest）回放的，输出文件何时才能按第一个键排序？
 
-## Task 1: Leveled Compaction
+## 任务 1：分层压缩
 
-On Day 2, you implemented simple leveled compaction. That strategy has two important limitations:
+第二天你实现了简单分层压缩。该策略有两个重要局限：
 
-* Each task includes an entire level. Because input files cannot be removed until the output is complete and durable, full-level compaction can temporarily double the space used by the selected data. Tiered compaction has the same problem. Partial compaction reduces peak space by selecting one upper-level SST at a time.
-* New data moves through empty levels. Starting from an empty tree, simple leveled compaction first moves L0 to L1, then L1 to L2, and so on. Sending L0 directly to the lowest level with a positive target size avoids these unnecessary rewrites.
+* 每个任务都包含整个层。由于在输出完成并持久化之前不能删除输入文件，整层压缩会临时让被选取数据的占用空间翻倍。分层（tiered）压缩也有同样的问题。部分压缩每次只选取一个上层 SST，从而降低峰值空间。
+* 新数据要穿过空层。从一棵空树开始，简单分层压缩先把 L0 移到 L1，再把 L1 移到 L2，依此类推。把 L0 直接送到目标大小为正的最低层，可以避免这些不必要的重写。
 
-In this chapter, you will implement a more realistic leveled compaction strategy based on RocksDB's design. You will need to modify:
+本章你将实现一个更贴近实际的分层（leveled）压缩策略，它基于 RocksDB 的设计。你需要修改：
 
 ```
 src/compact/leveled.rs
 ```
 
-To run the compaction simulator with a recorded workload seed,
+要用记录下来的工作负载种子运行压缩模拟器，
 
 ```shell
 cargo run --locked --bin compaction-simulator -- leveled --seed 42
 ```
 
-The seed controls the mock SST key ranges. When you compare learner and
-reference output, run both binaries from the same checkout and `Cargo.lock`
-with the same explicit seed. Changing the seed changes the workload. The
-default is `42`, but include `--seed` in saved evidence so another person can
-replay it.
+种子控制模拟 SST 的键范围。当你比较学习者输出与参考输出时，请用同一个检出和同一份 `Cargo.lock` 运行两个二进制，并显式传入相同的种子。改变种子就改变了工作负载。默认值是 `42`，但请在保存的证据中包含 `--seed`，以便别人可以重放。
 
-### Task 1.1: Compute Target Sizes
+### 任务 1.1：计算目标大小
 
-This strategy needs each SST's size and inclusive first-to-last key range. The simulator supplies mock SST metadata.
+这个策略需要每个 SST 的大小，以及从第一个键到最后一个键的闭区间范围。模拟器提供了模拟的 SST 元数据。
 
-First compute the target size of each level. With `base_level_size_mb = 200` and six levels below L0, an empty LSM tree has these targets:
+先计算每一层的目标大小。当 `base_level_size_mb = 200`、L0 以下有六层时，一棵空的 LSM 树的目标大小是：
 
 ```
 [0 0 0 0 0 200MB]
 ```
 
-Until the bottom level exceeds 200 MB, every intermediate level has a target size of zero. Small databases do not benefit from populating those levels.
+在底层超过 200 MB 之前，每个中间层的目标大小都是零。小数据库填充这些层没有收益。
 
-Once the bottom level reaches the base size, work upward by dividing each lower target by `level_size_multiplier`. If the bottom contains 300 MB and the multiplier is 10, the targets are:
+一旦底层达到基础大小，就向上计算，用每个下层的目标除以 `level_size_multiplier`。如果底层有 300 MB、倍数是 10，各层目标是：
 
 ```
 0 0 0 0 30MB 300MB
 ```
 
-At most *one* level may have a positive target below `base_level_size_mb`. If the bottom level contains 30 GB, the targets are:
+在 `base_level_size_mb` 以下，最多只有*一个*层的目标大小为正。如果底层有 30 GB，各层目标是：
 
 ```
 0 0 30MB 300MB 3GB 30GB
 ```
 
-Notice in this case L1 and L2 have target size of 0, and L3 is the only level with a positive target size below `base_level_size_mb`.
+注意在这个例子里 L1 和 L2 的目标大小为 0，L3 是 `base_level_size_mb` 以下唯一目标大小为正的层。
 
-### Task 1.2: Decide Base Level
+### 任务 1.2：确定基础层
 
-To avoid moving SSTs through empty levels, compact L0 with the first level whose target size is positive. For example, given these targets:
+为了避免让 SST 穿过空层，把 L0 与第一个目标大小为正的层压缩。例如，给定这些目标：
 
 ```
 0 0 0 0 30MB 300MB
 ```
 
-We will compact L0 SSTs with L5 SSTs if the number of L0 SSTs reaches the `level0_file_num_compaction_trigger` threshold.
+如果 L0 的 SST 数量达到 `level0_file_num_compaction_trigger` 阈值，我们将把 L0 的 SST 与 L5 的 SST 压缩。
 
-Now, you can generate L0 compaction tasks and run the compaction simulator.
+现在，你可以生成 L0 压缩任务并运行压缩模拟器。
 
 ```
 --- After Flush ---
@@ -121,11 +117,11 @@ L3 (18): [42, 65, 86, 87, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 61, 62, 52, 34
 L4 (6): [11, 12, 7, 8, 9, 10]
 ```
 
-The number of levels in the compaction simulator is 4. Therefore, the SSTs should be directly flushed to L3/L4.
+压缩模拟器中的层数是 4。因此，SST 应直接落盘到 L3/L4。
 
-### Task 1.3: Decide Level Priorities
+### 任务 1.3：确定层优先级
 
-After checking the L0 trigger, compute each lower level's priority as `current_size / target_size`. Only ratios greater than 1.0 are eligible. Compact the level with the highest priority into the next level. For example:
+检查 L0 触发条件之后，计算每个下层的优先级，即 `current_size / target_size`。只有大于 1.0 的比值才有资格。把优先级最高的层压缩到下一层。例如：
 
 ```
 L3: 200MB, target_size=20MB
@@ -134,7 +130,7 @@ L5: 1.9GB, target_size=2GB
 L6: 20GB, target_size=20GB
 ```
 
-The priority of compaction will be:
+压缩的优先级将是：
 
 ```
 L3: 200MB/20MB = 10.0
@@ -142,21 +138,19 @@ L4: 202MB/200MB = 1.01
 L5: 1.9GB/2GB = 0.95
 ```
 
-L3 and L4 are over their targets, while L5 is not. L3 has the highest priority, so the controller selects an L3-to-L4 task. After that task completes, L4 might become eligible for compaction into L5.
+L3 和 L4 超过了各自的目标，而 L5 没有。L3 的优先级最高，因此控制器选择一次 L3 到 L4 的任务。该任务完成后，L4 可能变得有资格压缩到 L5。
 
-### Task 1.4: Select SST to Compact
+### 任务 1.4：选择要压缩的 SST
 
-To avoid compacting a full level, select only the oldest SST in the chosen upper level. SST IDs increase monotonically, so the smallest ID identifies the oldest file.
+为了避免压缩整个层，只在选定的上层中选取最旧的 SST。SST ID 单调递增，因此最小的 ID 就是最旧的文件。
 
-There are other ways of choosing the compacting SST, for example, by looking into the number of delete tombstones. You can implement this as part of the bonus task.
+选择要压缩的 SST 还有其他方法，例如查看删除墓碑（tombstone）的数量。你可以把它作为附加任务来实现。
 
-After choosing the upper SST, find every lower-level SST whose key range overlaps it. The task contains exactly one upper SST and all of those lower SSTs.
+选定上层 SST 之后，找出每个键范围与它重叠的下层 SST。该任务恰好包含一个上层 SST 和所有这些下层 SST。
 
-When compaction completes, remove the selected files and insert the outputs in the correct lower-level position. In every level except L0, keep SST IDs ordered by first key.
+压缩完成时，移除被选取的文件，并把输出插入下层中正确的位置。除 L0 之外，每一层中的 SST 都按第一个键保持有序。
 
-Running the compaction simulator, you should see the same structural behavior.
-The IDs and key ranges in this excerpt are illustrative; compare exact values
-only when the source revision, lockfile, options, and seed are the same:
+运行压缩模拟器，你应看到相同的结构行为。这一段摘录中的 ID 和键范围只是示意；只有在源码版本、锁定文件、选项和种子都相同时，才比较具体数值：
 
 ```
 --- After Compaction ---
@@ -167,67 +161,67 @@ L3 (11): [166, 120, 143, 144, 179, 148, 167, 140, 189, 180, 190]
 L4 (22): [113, 85, 86, 36, 46, 37, 146, 100, 147, 203, 102, 103, 65, 81, 105, 75, 82, 95, 96, 97, 152, 153]
 ```
 
-The sizes of the levels should be kept under the level multiplier ratio. And the compaction task:
+各层的大小应保持在层倍数比例之下。而压缩任务：
 
 ```
 Upper L1 [224.sst 7cd080e..=33d79d04]
 Lower L2 [210.sst 1c657df4..=31a00e1b, 211.sst 31a00e1c..=46da9e43] -> [228.sst 7cd080e..=1cd18f74, 229.sst 1cd18f75..=31d616db, 230.sst 31d616dc..=46da9e43]
 ```
 
-...should contain only one SST from the upper level.
+……应只包含一个来自上层的 SST。
 
-**Note: we do not provide fine-grained unit tests for this part. You can run the compaction simulator and compare with the output of the reference solution to see if your implementation is correct.**
+**注意：这一部分我们不提供细粒度的单元测试。你可以运行压缩模拟器，并与参考实现的输出比较，判断你的实现是否正确。**
 
-## Task 2: Integrate Leveled Compaction
+## 任务 2：集成分层压缩
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/compact.rs
 ```
 
-Extend compaction dispatch and iterator construction for `LeveledCompactionTask`. The Day 2 read path already scans an arbitrary list of levels, so `get` and `scan` require no additional change here.
+为 `LeveledCompactionTask` 扩展压缩分发和迭代器构造。第二天的读路径已经会扫描任意层列表，因此这里的 `get` 和 `scan` 无需额外改动。
 
-## Chapter Checkpoint
+## 本章检查点
 
-Your controller should now compute dynamic target sizes, send L0 directly to the base level, and otherwise select one SST from the most overfull eligible level. Applying a result must preserve non-overlap and first-key order without requiring SST metadata during manifest replay.
+你的控制器现在应能计算动态目标大小，把 L0 直接送到基础层，其余情况下从超标最严重的合格层中选取一个 SST。应用结果时必须保持不重叠与第一个键顺序，并且不会在回放清单（manifest）期间需要 SST 元数据。
 
-For one simulator task, calculate the target sizes and priorities by hand. Verify the chosen upper SST and enumerate every overlapping lower SST using inclusive endpoints. Then replay the same task with `in_recovery = true` and explain why sorting at that point would fail.
+针对模拟器中的一个任务，手工计算目标大小和优先级。确认被选取的上层 SST，并用闭区间端点枚举每个重叠的下层 SST。然后用 `in_recovery = true` 重放同一个任务，解释为什么此时排序会失败。
 
-## Related Readings
+## 延伸阅读
 
 [Leveled Compaction - RocksDB Wiki](https://github.com/facebook/rocksdb/wiki/Leveled-Compaction)
 
-## Test Your Understanding
+## 检验你的理解
 
-### Correctness and Scheduling
+### 正确性与调度
 
-* Why does L0 compaction take priority over a lower level with a larger size score?
-* Construct an overlap example that fails if endpoint equality is treated as non-overlapping.
-* Why must output SSTs be merged with untouched lower-level SSTs and sorted by first key?
-* What information is unavailable while manifest records are being replayed, and what phase of recovery makes it available?
-* If a new L0 file appears while an L0-to-base-level task runs, how does result application retain it?
+* 为什么 L0 压缩优先于大小得分更高的下层？
+* 构造一个重叠例子，使得把端点相等视为不重叠时出错。
+* 为什么输出 SST 必须与未被触碰的下层 SST 合并，并按第一个键排序？
+* 回放清单（manifest）记录期间哪些信息不可用，恢复的哪个阶段让它变得可用？
+* 如果 L0 到基础层的任务运行期间出现了新的 L0 文件，应用结果时如何保留它？
 
-### Amplification and Design
+### 放大与设计
 
-* Estimate write amplification under an explicit level multiplier, overlap fraction, and steady-state workload. Which term changes when compaction selects one upper SST instead of an entire level?
-* Estimate worst-case point-read amplification with no cache or Bloom-filter benefit. How do overlapping L0 files differ from the one candidate file per lower level?
-* Finding a good key split point for compaction may potentially reduce the write amplification, or it does not matter at all? (Consider that case that the user write keys beginning with some prefixes, `00` and `01`. The number of keys under these two prefixes are different and their write patterns are different. If we can always split `00` and `01` into different SSTs...)
-* Imagine that a user was using tiered (universal) compaction before and wants to migrate to leveled compaction. What might be the challenges of this migration? And how to do the migration?
-* And if we do it reversely, what if the user wants to migrate from leveled compaction to tiered compaction?
-* What happens if compaction speed cannot keep up with the SST flushes for leveled compaction?
-* What must the system consider before scheduling multiple compaction tasks in parallel?
-* What is the peak storage usage for leveled compaction? Compared with universal compaction?
-* Is it true that with a lower `level_size_multiplier`, you can always get a lower write amplification?
-* What needs to be done if a user not using compaction at all decides to migrate to leveled compaction?
-* Some people propose to do intra-L0 compaction (compact L0 tables and still put them in L0) before pushing them to lower layers. What might be the benefits of doing so? (Might be related: [PebblesDB SOSP'17](https://www.cs.utexas.edu/~vijay/papers/sosp17-pebblesdb.pdf))
-* Consider the case that the upper level has two tables of `[100, 200], [201, 300]` and the lower level has `[50, 150], [151, 250], [251, 350]`. In this case, do you still want to compact one file in the upper level at a time? Why?
+* 在明确的层倍数、重叠比例和稳态工作负载下估算写放大。当压缩选取一个上层 SST 而不是整个层时，哪一项会变化？
+* 在没有缓存和布隆过滤器收益的情况下，估算最坏情况的点查放大。重叠的 L0 文件与每个下层的一个候选文件有何不同？
+* 为压缩寻找一个好的键切分点可能降低写放大，还是完全无关？（考虑用户写入以某些前缀开头的键，比如 `00` 和 `01`。这两个前缀下的键数量不同，写入模式也不同。如果我们总能把 `00` 和 `01` 切分到不同的 SST……）
+* 假设用户以前使用分层（tiered）压缩，现在想迁移到分层（leveled）压缩。这次迁移可能有什么挑战？又该如何迁移？
+* 反过来，如果用户想从分层（leveled）压缩迁移到分层（tiered）压缩，又会怎样？
+* 如果分层（leveled）压缩的速度跟不上 SST 落盘速度，会发生什么？
+* 系统在并行调度多个压缩任务之前必须考虑什么？
+* 分层（leveled）压缩的峰值存储占用是多少？与 universal 压缩相比呢？
+* `level_size_multiplier` 越小，是否总能得到越低的写放大？
+* 如果用户根本没用压缩，后来决定迁移到分层（leveled）压缩，需要做什么？
+* 有人提出在把 L0 表推到更下层之前先做 L0 内部压缩（压缩 L0 表但仍放在 L0）。这样做可能有什么好处？（可能相关：[PebblesDB SOSP'17](https://www.cs.utexas.edu/~vijay/papers/sosp17-pebblesdb.pdf)）
+* 考虑上层有两个表 `[100, 200], [201, 300]`，下层有 `[50, 150], [151, 250], [251, 350]` 的情况。这种情况下，你还想一次只压缩上层的一个文件吗？为什么？
 
-Use the [Week 2 end-of-week self-check](./week2-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs. You can also discuss them in the Discord community.
+用[第二周周末自检](./week2-overview.md#end-of-week-self-check)校验核心不变量。其余设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载和假设。你也可以在 Discord 社区讨论。
 
-## Bonus Tasks
+## 附加任务
 
-* **SST Ingestion.** A common optimization of data migration / batch import in LSM trees is to ask the upstream to generate SST files of their data, and directly place these files in the LSM state without going through the write path.
-* **SST Selection.** Instead of selecting the oldest SST, you may think of other heuristics to choose the SST to compact.
+* **SST 摄取。** LSM 树中数据迁移和批量导入的一种常见优化，是让上游生成其数据的 SST 文件，并把这些文件直接放进 LSM 状态，而不经过写路径。
+* **SST 选择。** 除了选取最旧的 SST，你还可以思考其他选择待压缩 SST 的启发式方法。
 
 {{#include copyright.md}}

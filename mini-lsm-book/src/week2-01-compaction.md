@@ -2,18 +2,18 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Compaction Implementation
+# 压缩实现
 
-![Chapter Overview](./lsm-tutorial/week2-01-full.svg)
+![本章概览](./lsm-tutorial/week2-01-full.svg)
 
-By the end of this chapter, you will be able to:
+学完本章，你将能够：
 
-* Implement the compaction logic that combines some files and produces new files.
-* Install a compaction result without losing SSTs flushed concurrently.
-* Update the LSM read path to incorporate non-overlapping sorted runs.
-* Explain why iterator priority and the destination level determine whether a tombstone can be discarded.
+* 实现把若干文件合并并产出新文件的压缩逻辑。
+* 安装压缩结果，同时不丢失并发落盘的 SST。
+* 更新 LSM 读路径，以纳入范围互不重叠的有序段。
+* 解释为什么迭代器优先级和目标层决定了一个墓碑（tombstone）能否被丢弃。
 
-To copy the test cases into the starter code and run them:
+把测试用例复制到起始代码并运行：
 
 ```
 cargo x copy-test --week 2 --day 1
@@ -22,43 +22,43 @@ cargo x scheck
 
 <div class="warning">
 
-Read the [Week 2 overview](./week2-overview.md) before beginning this chapter for an introduction to compaction and amplification.
+开始本章之前，请先读[第二周概览](./week2-overview.md)，了解压缩与放大的背景。
 
 </div>
 
-## Before You Begin
+## 开始之前
 
-At the end of Week 1, every flush creates a new L0 SST. L0 files can have overlapping key ranges and are stored from newest to oldest. This chapter introduces L1, one sorted run whose SSTs have non-overlapping key ranges and are ordered by their first keys.
+第一周结束时，每次落盘都会创建一个新的 L0 SST。L0 文件之间可以有重叠的键范围，并从新到旧存放。本章引入 L1，它是一个有序段，其中各 SST 的键范围互不重叠，并按各自的第一个键排序。
 
-Keep these invariants in mind while implementing the tasks:
+实现任务时，请记住这些不变量：
 
-1. When several inputs contain the same key, the iterator representing the newest source must win.
-2. L0 may overlap, but the SSTs produced for L1 must be ordered and non-overlapping.
-3. A tombstone may be discarded only when the compaction includes every possible older version of that key. In this chapter, full compaction targets the bottom level, so that condition holds.
-4. Merging and writing output SSTs happens outside `state_lock`. Installing the result happens while holding it, and must remove only the files named by the task. An L0 SST flushed after the task was created must remain in the new state.
-5. If every surviving entry is a tombstone, compaction produces no SST rather than building an empty one.
+1. 当多个输入包含同一个键时，代表最新来源的迭代器必须胜出。
+2. L0 可以重叠，但为 L1 产出的 SST 必须有序且互不重叠。
+3. 只有当压缩包含该键所有可能更旧的版本时，墓碑（tombstone）才可以丢弃。在本章中，完整压缩的目标是底层，因此这个条件成立。
+4. 合并与写出输出 SST 在 `state_lock` 之外进行。安装结果时持锁，并且只能移除任务点名的文件。任务创建之后落盘的 L0 SST 必须保留在新状态中。
+5. 如果所有幸存条目都是墓碑（tombstone），压缩不产出 SST，而不是构建一个空 SST。
 
-> **Predict before coding:** A full-compaction task captures L0 files `[5, 4]` and L1 files `[1, 2]`. While it is writing output SSTs, file 6 is flushed to the front of L0. Which files should remain in L0 after the result is installed? If the newest value of `k` in file 5 is a tombstone and an older value is in file 1, should either entry appear in the output?
+> **写代码前先预测：** 一个完整压缩任务选取了 L0 文件 `[5, 4]` 和 L1 文件 `[1, 2]`。在它写出输出 SST 期间，文件 6 被落盘到 L0 的最前面。安装结果之后，L0 里应保留哪些文件？如果文件 5 中 `k` 的最新值是一个墓碑（tombstone），而更旧的值在文件 1 中，两个条目是否应出现在输出里？
 
-## Task 1: Compaction Implementation
+## 任务 1：压缩实现
 
-In this task, implement the core compaction operation: merge a set of SSTs into a sorted run. You will need to modify:
+本任务实现核心的压缩操作：把一组 SST 合并成一个有序段。你需要修改：
 
 ```
 src/compact.rs
 ```
 
-Specifically, implement the `force_full_compaction` and `compact` functions. `force_full_compaction` chooses the files and installs the result in the LSM state. `compact` performs the merge and returns a set of new SSTs.
+具体来说，实现 `force_full_compaction` 和 `compact` 两个函数。`force_full_compaction` 选择文件并把结果安装到 LSM 状态中。`compact` 执行合并并返回一组新的 SST。
 
-Use `MergeIterator` to merge every SST captured by the task, then write the surviving entries through `SsTableBuilder`. Split the output when it reaches the target SST size. After the merge finishes, install the output as the L1 sorted run and remove the obsolete inputs from the state and filesystem. At this stage, SSTs appear only in L0 or L1, so `LsmStorageState::levels` contains one entry.
+用 `MergeIterator` 合并任务选取的每个 SST，然后通过 `SsTableBuilder` 写出幸存条目。输出达到目标 SST 大小时就切分。合并结束后，把输出安装为 L1 有序段，并从状态和文件系统中移除过期的输入。在这个阶段，SST 只出现在 L0 或 L1 中，因此 `LsmStorageState::levels` 只有一个元素。
 
-Compaction should not block L0 flushes. Do not hold `state_lock` while merging files and writing outputs. Acquire it only when installing the result, and release it immediately after the structural update and manifest record are complete.
+压缩不应阻塞 L0 落盘。合并文件、写出输出时不要持有 `state_lock`。只在安装结果时获取它，并在结构更新和清单（manifest）记录完成之后立即释放。
 
-You may assume that only one compaction runs at a time. The SSTs installed in L1 must be sorted by first key and have non-overlapping key ranges.
+你可以假设同一时刻只有一个压缩在运行。安装到 L1 的 SST 必须按第一个键排序，且键范围互不重叠。
 
 <details>
 
-<summary>Spoilers: Compaction Pseudo Code</summary>
+<summary>剧透：压缩伪代码</summary>
 
 ```rust,no_run
 fn force_full_compaction(&self) {
@@ -70,8 +70,8 @@ fn force_full_compaction(&self) {
     {
         let state_lock = self.state_lock.lock();
         let state = self.state.write();
-        state.l0_sstables.remove(/* the ones being compacted */);
-        state.levels[0] = new_ssts; // new SSTs added to L1
+        state.l0_sstables.remove(/* 正在被压缩的那些 */);
+        state.levels[0] = new_ssts; // 新增的 SST 加入 L1
     };
     std::fs::remove(ssts_to_compact)?;
 }
@@ -79,28 +79,28 @@ fn force_full_compaction(&self) {
 
 </details>
 
-For now, `compact` needs to handle only `ForceFullCompaction`, whose task lists the input SSTs. Preserve source priority so that the newest version of each key reaches the output.
+目前 `compact` 只需要处理 `ForceFullCompaction`，它的任务列出了输入的 SST。请保持来源优先级，让每个键的最新版本进入输出。
 
-Because this task includes every SST, retain only the newest version of each key. If that version is a tombstone, omit it from the output. Later chapters compact only part of the tree, so they cannot always discard tombstones.
+由于这个任务包含所有 SST，只需保留每个键的最新版本。如果该版本是墓碑（tombstone），就把它从输出中省略。后续章节只压缩树的一部分，因此不能总是丢弃墓碑。
 
-Before moving on, account for these two cases:
+继续之前，请考虑以下两种情况：
 
-* How does your implementation retain an L0 SST flushed while compaction is in progress?
-* Can a reader using an older state snapshot finish after the input filenames are unlinked? On Unix-like systems, an open file remains accessible until its final handle is closed.
+* 你的实现如何保留压缩进行期间落盘的 L0 SST？
+* 在输入文件名被解除链接之后，使用较旧状态快照的读线程还能正常完成吗？在类 Unix 系统上，已打开的文件在最后一个句柄关闭之前仍然可访问。
 
-## Task 2: Concat Iterator
+## 任务 2：Concat 迭代器
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/iterators/concat_iterator.rs
 ```
 
-A sorted run does not need a merge iterator: its SSTs are ordered and have non-overlapping ranges, so a concat iterator can visit them sequentially. Store the SST objects and create only the active child iterator. Creating every child in advance would read the first block of every SST unnecessarily.
+有序段不需要归并迭代器：它的 SST 有序且范围互不重叠，因此一个 concat 迭代器可以顺序访问它们。保存 SST 对象，并且只创建当前活跃的子迭代器。提前创建所有子迭代器会不必要地读取每个 SST 的第一个块。
 
-## Task 3: Integrate with the Read Path
+## 任务 3：集成到读路径
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/lsm_iterator.rs
@@ -108,22 +108,22 @@ src/lsm_storage.rs
 src/compact.rs
 ```
 
-Now update the two-level read path to use the concat iterator for L1.
+现在更新两层的读路径，让 L1 使用 concat 迭代器。
 
-Change the inner iterator type of `LsmIterator`. Merge the memtable and L0 iterators first, then use `TwoMergeIterator` to combine that newer stream with the L1 concat iterator.
+修改 `LsmIterator` 的内层迭代器类型。先合并内存表和 L0 的迭代器，再用 `TwoMergeIterator` 把这条较新的流与 L1 的 concat 迭代器组合起来。
 
-You can also change your compaction implementation to leverage the concat iterator.
+你也可以修改压缩实现，让它利用 concat 迭代器。
 
-Implement `num_active_iterators` for the concat iterator. For this exercise, it should always report one active iterator.
+为 concat 迭代器实现 `num_active_iterators`。在本练习中，它应始终报告一个活跃迭代器。
 
-To test your implementation interactively,
+要交互式地测试你的实现，
 
 ```shell
-cargo run --bin mini-lsm-cli-ref -- --compaction none # reference solution
-cargo run --bin mini-lsm-cli -- --compaction none # your solution
+cargo run --bin mini-lsm-cli-ref -- --compaction none # 参考实现
+cargo run --bin mini-lsm-cli -- --compaction none # 你的实现
 ```
 
-And then,
+然后，
 
 ```
 fill 1000 3000
@@ -138,39 +138,39 @@ get 2333
 scan 2000 2333
 ```
 
-## Chapter Checkpoint
+## 本章检查点
 
-Your engine should now compact the captured L0 and L1 inputs into zero or more ordered L1 SSTs, retain L0 files created after the task snapshot, and serve `get` and `scan` through both overlapping and non-overlapping sources.
+你的引擎现在应能把任务选取的 L0 和 L1 输入压缩为零个或多个有序的 L1 SST，保留任务快照之后创建的 L0 文件，并通过重叠与不重叠两类来源同时服务 `get` 和 `scan`。
 
-In addition to passing the tests, verify three cases explicitly:
+除了通过测试，还要显式验证三种情况：
 
-1. Give two input SSTs the same key and confirm that reversing their merge priority changes the result.
-2. Compact an input containing only tombstones and confirm that no empty SST is created.
-3. Seek a concat iterator into the second or later SST and confirm that it opens only the active child iterator.
+1. 让两个输入 SST 包含同一个键，确认颠倒它们的合并优先级会改变结果。
+2. 压缩一个只含墓碑（tombstone）的输入，确认不会创建空 SST。
+3. 把 concat 迭代器定位到第二个或更靠后的 SST，确认它只打开活跃的子迭代器。
 
-## Test Your Understanding
+## 检验你的理解
 
-Answer correctness questions with a concrete LSM state or execution. For amplification questions, state what you count in the numerator and denominator.
+请用具体的 LSM 状态或执行过程回答正确性问题。对于放大相关的问题，说明分子和分母各计入什么。
 
-### Correctness and Concurrency
+### 正确性与并发
 
-* Construct the smallest input in which reversing L0 iterator priority preserves a stale value. Then construct one in which it resurrects a deleted value.
-* Why is it safe to discard tombstones during this chapter's full compaction? Give a counterexample showing why the same rule is unsafe when compacting into a non-bottom level.
-* How does your implementation retain an L0 SST flushed while compaction is writing its output?
-* What should `apply_compaction_result` do when compaction produces no SSTs?
-* If your implementation removes the original SST files immediately after installing the new state, can a reader using an older state snapshot still finish? How does the answer depend on filesystem semantics?
-* What ordering and non-overlap properties must hold before `SstConcatIterator` is safe to use?
+* 构造最小的输入，使颠倒 L0 迭代器优先级时保留一个过期值。再构造一个使已删除的值重新出现的输入。
+* 在本章的完整压缩中，为什么丢弃墓碑（tombstone）是安全的？给出一个反例，说明在压缩到非底层时同一规则为何不安全。
+* 你的实现如何在压缩写出输出期间保留新落盘的 L0 SST？
+* 当压缩不产出任何 SST 时，`apply_compaction_result` 应该做什么？
+* 如果你的实现在安装新状态后立即删除原 SST 文件，使用较旧状态快照的读线程还能完成吗？答案如何取决于文件系统语义？
+* 在可以安全使用 `SstConcatIterator` 之前，必须满足哪些顺序和不重叠性质？
 
-### Performance and Design
+### 性能与设计
 
-* What are the definitions of read/write/space amplifications? (This is covered in the overview chapter)
-* What are the ways to accurately compute the read/write/space amplifications, and what are the ways to estimate them?
-* Is it correct that a key will take some storage space even if a user requests to delete it?
-* Because compaction consumes read and write bandwidth, should the engine postpone or pause it during heavy foreground traffic? What new problem could that create? Read [SILK: Preventing Latency Spikes in Log-Structured Merge Key-Value Stores](https://www.usenix.org/conference/atc19/presentation/balmau).
-* Is it a good idea to use/fill the block cache for compactions? Or is it better to fully bypass the block cache when compaction?
-* Does it make sense to have a `struct ConcatIterator<I: StorageIterator>` in the system?
-* Some researchers/engineers propose to offload compaction to a remote server or a serverless lambda function. What are the benefits, and what might be the potential challenges and performance impacts of doing remote compaction? (Think of the point when a compaction completes and what happens to the block cache on the next read request...)
+* 读放大、写放大、空间放大的定义分别是什么？（概览章节已经讲过）
+* 有哪些方法可以精确计算读放大、写放大、空间放大，又有哪些方法可以估算它们？
+* 即使请求删除某个键，该键仍会占用一些存储空间，这个说法正确吗？
+* 由于压缩消耗读写带宽，引擎是否应在前台流量较重时推迟或暂停它？这会带来什么新问题？请阅读 [SILK: Preventing Latency Spikes in Log-Structured Merge Key-Value Stores](https://www.usenix.org/conference/atc19/presentation/balmau)。
+* 让压缩使用或填充块缓存是好主意吗？还是在压缩时完全绕过块缓存更好？
+* 在系统中放一个 `struct ConcatIterator<I: StorageIterator>` 有意义吗？
+* 一些研究者和工程师提出把压缩卸载到远程服务器或无服务器 lambda 函数上。这样做有什么好处，可能遇到哪些挑战和性能影响？（想一想压缩完成时的那一刻，以及下一次读请求时块缓存会发生什么……）
 
-Use the [Week 2 end-of-week self-check](./week2-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs. You can also discuss them in the Discord community.
+用[第二周周末自检](./week2-overview.md#end-of-week-self-check)校验核心不变量。其余设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载和假设。你也可以在 Discord 社区讨论。
 
 {{#include copyright.md}}

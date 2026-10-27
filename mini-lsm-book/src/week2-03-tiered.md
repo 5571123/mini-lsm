@@ -2,20 +2,20 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Tiered Compaction Strategy
+# 分层（tiered）压缩策略
 
-![Chapter Overview](./lsm-tutorial/week2-00-tiered.svg)
+![本章概览](./lsm-tutorial/week2-00-tiered.svg)
 
-By the end of this chapter, you will be able to:
+学完本章，你将能够：
 
-* Implement a tiered compaction strategy and simulate it on the compaction simulator.
-* Incorporate tiered compaction into the engine's flush, compaction, and read paths.
-* Explain how universal compaction's three triggers trade write, read, and space amplification.
-* Preserve newest-to-oldest tier order and determine whether a task includes the bottom tier.
+* 实现分层（tiered）压缩策略，并在压缩模拟器上模拟它。
+* 把分层（tiered）压缩纳入引擎的落盘、压缩和读路径。
+* 解释 universal 压缩的三个触发条件如何取舍写放大、读放大和空间放大。
+* 保持从新到旧的层（tier）顺序，并判断一个任务是否包含最底部的层（tier）。
 
-This chapter's tiered policy is RocksDB's universal compaction. The chapter uses the two terms interchangeably.
+本章的分层（tiered）策略就是 RocksDB 的 universal 压缩。本章混用这两个术语。
 
-To copy the test cases into the starter code and run them:
+把测试用例复制到起始代码并运行：
 
 ```
 cargo x copy-test --week 2 --day 3
@@ -24,57 +24,57 @@ cargo x scheck
 
 <div class="warning">
 
-Read the [Week 2 overview](./week2-overview.md) before beginning this chapter for an introduction to compaction and amplification.
+开始本章之前，请先读[第二周概览](./week2-overview.md)，了解压缩与放大的背景。
 
 </div>
 
-## Before You Begin
+## 开始之前
 
-Unlike leveled compaction, tiered compaction treats each flush as a new sorted run. The `levels` vector is repurposed to store tiers from newest to oldest; the numeric ID names a tier rather than describing a fixed depth.
+与分层（leveled）压缩不同，分层（tiered）压缩把每次落盘都视为一个新的有序段。`levels` 向量改用来从新到旧存放层（tier）；数字 ID 只是一个层的名字，并不描述固定的深度。
 
-Keep these invariants in mind:
+请记住这些不变量：
 
-1. `levels[0]` is the newest tier, and every tier is internally sorted and non-overlapping.
-2. A tiered task selects a contiguous prefix of tiers. The merge iterator must use the same newest-to-oldest order so that newer versions win.
-3. The controller considers triggers in order: minimum tier count, space amplification, size ratio, then reduction of sorted runs.
-4. `bottom_tier_included` is true only if the selected prefix contains the oldest tier. Tombstones must remain when an older tier is left out.
-5. A flush creates a one-SST tier at the front of `levels`; it does not add an L0 file.
+1. `levels[0]` 是最新的层（tier），每个层内部有序且范围互不重叠。
+2. 分层（tiered）任务选取一段连续的层（tier）前缀。归并迭代器必须使用同样的从新到旧顺序，使较新的版本胜出。
+3. 控制器按顺序考虑触发条件：最小层数、空间放大、大小比例，最后是减少有序段数量。
+4. 只有当被选取的前缀包含最旧的层（tier）时，`bottom_tier_included` 才为真。如果留下了更旧的层，墓碑（tombstone）必须保留。
+5. 落盘会在 `levels` 的前端创建一个只含一个 SST 的层（tier）；它不会添加 L0 文件。
 
-> **Predict before coding:** Suppose the tiers from newest to oldest have sizes `[1, 1, 3, 20]`, and the reduce-sorted-runs trigger is capped at `max_merge_width = 2`. Which tiers are selected? Does the task include the bottom tier, and may it discard a tombstone whose older value could be in the 20-file tier?
+> **写代码前先预测：** 假设从新到旧的各层（tier）大小为 `[1, 1, 3, 20]`，且减少有序段的触发条件被 `max_merge_width = 2` 限制。会选取哪些层？该任务是否包含最底部的层，它能否丢弃一个墓碑（tombstone）——而该墓碑更旧的值可能位于那个 20 个文件的层中？
 
-## Task 1: Universal Compaction
+## 任务 1：Universal 压缩
 
-You will implement a simplified form of RocksDB's universal compaction. As in simple leveled compaction, the controller uses file counts rather than byte sizes. A task always includes each selected tier in full.
+你将实现 RocksDB universal 压缩的一个简化形式。与简单分层压缩一样，控制器使用文件数而不是字节大小。一个任务总是完整包含每个被选取的层（tier）。
 
-### Task 1.0: Precondition
+### 任务 1.0：前置条件
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/compact/tiered.rs
 ```
 
-In universal compaction, the LSM state does not use L0. Instead, each memtable flush creates a single-SST sorted run, or tier. The `levels` vector stores all tiers, with **the newest tier at the lowest index**. Each element is a tuple containing a tier ID and the SST IDs in that tier. Place every newly flushed SST in a tier at the front of the vector. The compaction simulator uses the first output SST ID as the tier ID; your implementation should do the same.
+在 universal 压缩中，LSM 状态不使用 L0。每次内存表落盘都创建一个只含一个 SST 的有序段，也就是一个层（tier）。`levels` 向量保存所有层，**最新的层位于最低的下标**。每个元素是一个元组，包含一个层 ID 和该层中的 SST ID。把每个新落盘的 SST 放进位于向量前端的层中。压缩模拟器把第一个输出 SST 的 ID 用作层 ID；你的实现也应如此。
 
-Universal compaction will only trigger tasks when the number of tiers (sorted runs) reaches `num_tiers`. Otherwise, it does not trigger any compaction.
+只有当层（tier）数（有序段数）达到 `num_tiers` 时，universal 压缩才会触发任务。否则不触发任何压缩。
 
-### Task 1.1: Triggered by Space Amplification Ratio
+### 任务 1.1：由空间放大比例触发
 
-The first trigger of universal compaction is by space amplification ratio. As we discussed in the overview chapter, space amplification can be estimated by `engine_size / last_level_size`. In our implementation, we compute the space amplification ratio by `all levels except last level size / last level size`, so that the ratio can be scaled to `[0, +inf)` instead of `[1, +inf]`. This is also consistent with the RocksDB implementation.
+universal 压缩的第一个触发条件是空间放大比例。正如概览章节所讨论的，空间放大可以用 `engine_size / last_level_size` 估算。在我们的实现中，空间放大比例用 `除最后一层外所有层的大小 / 最后一层的大小` 计算，这样比值可以落在 `[0, +inf)` 而不是 `[1, +inf)`。这也与 RocksDB 的实现一致。
 
-This estimate models a fixed logical dataset—for example, 100 GB—that receives repeated updates. The bottom tier approximates the logical dataset, while upper tiers contain newer changes that have not yet reached the bottom. The implementation expresses excess space as `upper_tier_size / bottom_tier_size`, producing a range from zero upward.
+这个估算建模的是一个逻辑大小固定的数据集——例如 100 GB——它不断收到更新。最底部的层（tier）近似这个逻辑数据集，而上层（tier）包含尚未到达底部的较新变更。实现把多余空间表示为 `upper_tier_size / bottom_tier_size`，取值范围从零向上。
 
-Trigger full compaction when `upper_tier_size / bottom_tier_size` is at least `max_size_amplification_percent / 100`. For example:
+当 `upper_tier_size / bottom_tier_size` 至少为 `max_size_amplification_percent / 100` 时，触发完整压缩。例如：
 
 ```
 Tier 3: 1
-Tier 2: 1 ; all levels except last level size = 2
-Tier 1: 1 ; last level size = 1, 2/1=2
+Tier 2: 1 ; 除最后一层外所有层的大小 = 2
+Tier 1: 1 ; 最后一层大小 = 1，2/1=2
 ```
 
-Assume `max_size_amplification_percent` = 200, we should trigger a full compaction now.
+假设 `max_size_amplification_percent` = 200，我们现在应触发一次完整压缩。
 
-After you implement this trigger, you can run the compaction simulator. You will see:
+实现这个触发条件之后，你可以运行压缩模拟器。你会看到：
 
 ```shell
 cargo run --bin compaction-simulator tiered --iterations 10
@@ -93,7 +93,7 @@ L3 [3] L2 [2] L1 [1] -> [4, 5, 6]
 L4 (3): [3, 2, 1]
 ```
 
-With only this trigger implemented, the end of the simulation includes states like:
+如果只实现这一个触发条件，模拟结束时会出现类似这样的状态：
 
 ```bash
 cargo run --bin compaction-simulator tiered
@@ -161,28 +161,28 @@ Maximum Space Usage: 50/50=1.000x
 Read Amplification: 27x
 ```
 
-The simulator sets `num_tiers` to 8, but the state can still grow far beyond eight tiers because the threshold only enables scheduling; the space trigger does not guarantee that it will choose a task. This causes high read amplification.
+模拟器把 `num_tiers` 设为 8，但状态仍可能远远超过八个层（tier），因为该阈值只是允许调度；空间触发条件并不保证一定会选中一个任务。这会造成高读放大。
 
-The current trigger controls space amplification only. The next two triggers limit read amplification.
+当前的触发条件只控制空间放大。接下来的两个触发条件限制读放大。
 
-### Task 1.2: Triggered by Size Ratio
+### 任务 1.2：由大小比例触发
 
-The size-ratio trigger maintains geometric growth between tiers. Starting with the newest tier, compare each next tier's size with the total size of all newer tiers. At the first ratio greater than `(100 + size_ratio) / 100`, compact the newer prefix but exclude the tier that satisfied the ratio. Schedule the task only when the prefix contains at least `min_merge_width` tiers.
+大小比例触发条件让各层（tier）之间保持几何增长。从最新的层开始，把下一个层的大小与所有更新层的总大小比较。在第一个比值大于 `(100 + size_ratio) / 100` 的位置，压缩较新的前缀，但排除满足该比值的那个层。只有当该前缀至少包含 `min_merge_width` 个层时才调度任务。
 
-For example, with `size_ratio = 1` and `min_merge_width = 2`, compact when the ratio exceeds 101%:
-
-```
-Tier 3: 1
-Tier 2: 1 ; 1 / 1 = 1
-Tier 1: 1 ; 1 / (1 + 1) = 0.5, no compaction triggered
-```
-
-Example 2:
+例如，取 `size_ratio = 1` 和 `min_merge_width = 2`，当比值超过 101% 时压缩：
 
 ```
 Tier 3: 1
 Tier 2: 1 ; 1 / 1 = 1
-Tier 1: 3 ; 3 / (1 + 1) = 1.5, compact tier 2+3
+Tier 1: 1 ; 1 / (1 + 1) = 0.5，不触发压缩
+```
+
+例子 2：
+
+```
+Tier 3: 1
+Tier 2: 1 ; 1 / 1 = 1
+Tier 1: 3 ; 3 / (1 + 1) = 1.5，压缩层 2+3
 ```
 
 ```
@@ -190,12 +190,12 @@ Tier 4: 2
 Tier 1: 3
 ```
 
-Example 3:
+例子 3：
 
 ```
 Tier 3: 1
-Tier 2: 2 ; 2 / 1 = 2, however, it does not make sense to compact only one tier; also note that min_merge_width=2
-Tier 1: 4 ; 4 / 3 = 1.33, compact tier 2+3
+Tier 2: 2 ; 2 / 1 = 2，但只压缩一个层没有意义；另注意 min_merge_width=2
+Tier 1: 4 ; 4 / 3 = 1.33，压缩层 2+3
 ```
 
 ```
@@ -203,7 +203,7 @@ Tier 4: 3
 Tier 1: 4
 ```
 
-With this trigger, you will observe the following in the compaction simulator:
+加上这个触发条件后，你会在压缩模拟器中观察到：
 
 ```bash
 cargo run --bin compaction-simulator tiered
@@ -243,13 +243,13 @@ Maximum Space Usage: 200/200=1.000x
 Read Amplification: 38x
 ```
 
-This trigger produces fewer one-SST tiers and tends to keep tiers ordered from smaller to larger. The state can still exceed `num_tiers`, so one final trigger is required.
+这个触发条件产出的单 SST 层（tier）更少，并且倾向于让各层从小到大排列。状态仍可能超过 `num_tiers`，因此还需要最后一个触发条件。
 
-### Task 1.3: Reduce Sorted Runs
+### 任务 1.3：减少有序段数量
 
-If none of the previous triggers produce a task, merge the first `max_merge_width` tiers into one tier to reduce the number of sorted runs. If `max_merge_width` is not set, select all tiers. Remember that a capped prefix does not include the bottom tier when older tiers remain.
+如果前面的触发条件都没有产出任务，就把前 `max_merge_width` 个层（tier）合并成一个层，以减少有序段的数量。如果没有设置 `max_merge_width`，则选取所有层。请记住，当还有更旧的层留下时，被限制的前缀不包含最底部的层。
 
-With this compaction trigger enabled, you will see:
+启用这个压缩触发条件后，你会看到：
 
 ```bash
 cargo run --bin compaction-simulator-ref tiered --iterations 200 --size-only
@@ -266,7 +266,7 @@ Maximum Space Usage: 280/200=1.400x
 Read Amplification: 7x
 ```
 
-You can also try tiered compaction with a larger tier limit:
+你也可以试试把层数上限调大后的分层（tiered）压缩：
 
 ```bash
 cargo run --bin compaction-simulator tiered --iterations 200 --size-only --num-tiers 16
@@ -283,50 +283,50 @@ Maximum Space Usage: 350/200=1.750x
 Read Amplification: 12x
 ```
 
-**Note: we do not provide fine-grained unit tests for this part. You can run the compaction simulator and compare with the output of the reference solution to see if your implementation is correct.**
+**注意：这一部分我们不提供细粒度的单元测试。你可以运行压缩模拟器，并与参考实现的输出比较，判断你的实现是否正确。**
 
-## Task 2: Integrate with the Read Path
+## 任务 2：集成到读路径
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/compact.rs
 src/lsm_storage.rs
 ```
 
-Tiered compaction does not use L0, so flush each memtable directly to a new tier. Use `self.compaction_controller.flush_to_l0()` to choose between the leveled and tiered flush paths. Name a compacted tier with its first output SST ID, and construct the compaction merge iterators in newest-to-oldest tier order.
+分层（tiered）压缩不使用 L0，因此把每个内存表直接落盘为一个新的层（tier）。用 `self.compaction_controller.flush_to_l0()` 在分层（leveled）和分层（tiered）两条落盘路径之间选择。用第一个输出 SST 的 ID 为压缩产出的层命名，并按从新到旧的层顺序构造压缩用的归并迭代器。
 
-## Chapter Checkpoint
+## 本章检查点
 
-Your engine should now flush directly into newest-first tiers, schedule the first eligible universal-compaction trigger, and retain tombstones whenever a task leaves older tiers behind. A task that includes the bottom tier may legitimately produce no SSTs when all surviving entries are tombstones.
+你的引擎现在应能直接落盘到按最新优先排列的层（tier），调度第一个符合条件的 universal 压缩触发条件，并在任务留下更旧的层时保留墓碑（tombstone）。当所有幸存条目都是墓碑时，包含最底部层的任务可以不产出任何 SST。
 
-For several simulator iterations, annotate each task with the trigger that selected it, the tiers it consumes, and whether it reaches the bottom. Then use one duplicate key to verify merge priority across tiers. Finally, test a capped `max_merge_width` and confirm that the task does not claim to include an unselected bottom tier.
+对模拟器的若干次迭代，为每个任务标注：选中它的触发条件、它消耗的层，以及它是否到达底部。然后用一个重复键验证跨层的合并优先级。最后测试受限的 `max_merge_width`，确认任务不会声称包含一个未被选取的底层。
 
-## Related Readings
+## 延伸阅读
 
 [Universal Compaction - RocksDB Wiki](https://github.com/facebook/rocksdb/wiki/Universal-Compaction)
 
-## Test Your Understanding
+## 检验你的理解
 
-### Correctness and Scheduling
+### 正确性与调度
 
-* Why must every task select adjacent tiers from the newest end of the state? Construct a counterexample for a task that merges two non-adjacent tiers and places the output incorrectly.
-* When `max_merge_width` limits a task to only the newest tiers, why must `bottom_tier_included` be false?
-* What should the new LSM state contain if a bottom-tier compaction produces no output because every surviving entry is a tombstone?
-* Construct a tier-size sequence for which the space-amplification trigger wins, and another for which the size-ratio trigger wins.
-* If a new tier is flushed while a task is running, where should the compacted output be inserted relative to that tier?
+* 为什么每个任务都必须从状态的最新一端选取相邻的层？构造一个反例：任务合并两个不相邻的层并把输出放错位置。
+* 当 `max_merge_width` 把任务限制为只取最新的若干层时，为什么 `bottom_tier_included` 必须为假？
+* 如果底层压缩因为所有幸存条目都是墓碑（tombstone）而没有输出，新的 LSM 状态应包含什么？
+* 构造一个层大小序列，使空间放大触发条件胜出；再构造一个使大小比例触发条件胜出。
+* 如果任务运行期间落盘了一个新的层（tier），压缩输出应插在这个层的哪个位置？
 
-### Amplification and Design
+### 放大与设计
 
-* Estimate write amplification for one concrete tier-size sequence. Begin by ignoring the final *reduce sorted runs* trigger, and count physical SST bytes written divided by flushed bytes.
-* Estimate worst-case point-read amplification for a state with `N` tiers and no cache or Bloom-filter benefit. Which policy parameter bounds that value?
-* What are the advantages and disadvantages of universal compaction compared with leveled compaction?
-* How much temporary free storage does one universal-compaction task require? Answer for a concrete set of input-tier sizes and distinguish peak task space from steady-state space amplification.
-* What happens if compaction speed cannot keep up with the SST flushes for tiered compaction?
-* What must the system consider before scheduling multiple compaction tasks in parallel?
-* SSDs also write its own logs (basically it is a log-structured storage). If the SSD has a write amplification of 2x, what is the end-to-end write amplification of the whole system? Related: [ZNS: Avoiding the Block Interface Tax for Flash-based SSDs](https://www.usenix.org/conference/atc21/presentation/bjorling).
-* Consider the case that the user chooses to keep a large number of sorted runs (i.e., 300) for tiered compaction. To make the read path faster, is it a good idea to keep some data structure that helps reduce the time complexity (i.e., to `O(log n)`) of finding SSTs to read in each layer for some key ranges? Note that normally, you will need to do a binary search in each sorted run to find the key ranges that you will need to read. (Check out Neon's [layer map](https://neon.tech/blog/persistent-structures-in-neons-wal-indexing) implementation!)
+* 针对一个具体的层大小序列估算写放大。先忽略最后的*减少有序段数量*触发条件，用写出的物理 SST 字节数除以落盘字节数。
+* 在一个有 `N` 个层（tier）、且没有缓存和布隆过滤器收益的状态下，估算最坏情况的点查放大。哪个策略参数限定了这个值？
+* 与分层（leveled）压缩相比，universal 压缩有哪些优点和缺点？
+* 一个 universal 压缩任务需要多少临时空闲存储？请针对一组具体的输入层大小作答，并区分任务的峰值空间与稳态空间放大。
+* 如果压缩速度跟不上分层（tiered）压缩的 SST 落盘速度，会发生什么？
+* 系统在并行调度多个压缩任务之前必须考虑什么？
+* SSD 自己也会写日志（基本上它就是一种日志结构存储）。如果 SSD 的写放大是 2x，整个系统的端到端写放大是多少？相关阅读：[ZNS: Avoiding the Block Interface Tax for Flash-based SSDs](https://www.usenix.org/conference/atc21/presentation/bjorling)。
+* 考虑用户为分层（tiered）压缩保留大量有序段（例如 300 个）的情况。为了让读路径更快，是否可以维护某种数据结构，把在每一层中查找某键范围需读取的 SST 的时间复杂度降到 `O(log n)`？注意，通常你需要在每个有序段中二分查找，才能找到需要读取的键范围。（看看 Neon 的 [layer map](https://neon.tech/blog/persistent-structures-in-neons-wal-indexing) 实现！）
 
-Use the [Week 2 end-of-week self-check](./week2-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs. You can also discuss them in the Discord community.
+用[第二周周末自检](./week2-overview.md#end-of-week-self-check)校验核心不变量。其余设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载和假设。你也可以在 Discord 社区讨论。
 
 {{#include copyright.md}}

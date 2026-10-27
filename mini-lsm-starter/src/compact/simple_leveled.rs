@@ -25,7 +25,7 @@ pub struct SimpleLeveledCompactionOptions {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SimpleLeveledCompactionTask {
-    // if upper_level is `None`, then it is L0 compaction
+    // 如果 upper_level 为 `None`，说明这是 L0 压缩
     pub upper_level: Option<usize>,
     pub upper_level_sst_ids: Vec<usize>,
     pub lower_level: usize,
@@ -42,9 +42,9 @@ impl SimpleLeveledCompactionController {
         Self { options }
     }
 
-    /// Generates a compaction task.
+    /// 生成一个压缩任务。
     ///
-    /// Returns `None` if no compaction needs to be scheduled. The order of SSTs in the compaction task id vector matters.
+    /// 如果不需要调度压缩，返回 `None`。压缩任务中的 SST id 向量，顺序很重要。
     pub fn generate_compaction_task(
         &self,
         _snapshot: &LsmStorageState,
@@ -52,13 +52,12 @@ impl SimpleLeveledCompactionController {
         unimplemented!()
     }
 
-    /// Apply the compaction result.
+    /// 应用压缩结果。
     ///
-    /// The compactor will call this function with the compaction task and the list of SST ids generated. This function applies the
-    /// result and generates a new LSM state. The functions should only change `l0_sstables` and `levels` without changing memtables
-    /// and `sstables` hash map. Though there should only be one thread running compaction jobs, you should think about the case
-    /// where an L0 SST gets flushed while the compactor generates new SSTs, and with that in mind, you should do some sanity checks
-    /// in your implementation.
+    /// 压缩线程会用压缩任务和它生成的 SST id 列表调用该函数。该函数应用结果并生成新的 LSM 状态。
+    /// 该函数只应修改 `l0_sstables` 和 `levels`，不应修改内存表和 `sstables` 哈希表。虽然同一时间
+    /// 只会有一个线程在跑压缩任务，你仍要考虑压缩线程生成新 SST 期间某个 L0 SST 被落盘的情况，
+    /// 并在实现里做相应的合法性检查。
     pub fn apply_compaction_result(
         &self,
         _snapshot: &LsmStorageState,

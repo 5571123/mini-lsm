@@ -2,47 +2,47 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Snack Time: SST Optimizations
+# 加餐时间：SST 优化
 
-![Chapter Overview](./lsm-tutorial/week1-07-overview.svg)
+![本章概览](./lsm-tutorial/week1-07-overview.svg)
 
-In the previous chapter, you completed a storage engine that supports `get`, `scan`, and `put`. To finish the week, you will implement two approachable but important SST-format optimizations. Welcome to Week 1's snack-time chapter!
+上一章你完成了一个支持 `get`、`scan` 和 `put` 的存储引擎。为结束本周，你将实现两个容易上手但重要的 SSTable 格式优化。欢迎来到第一周的加餐章节！
 
-By the end of this chapter, you will be able to:
+学完本章，你将能够：
 
-* Implement Bloom filters for SSTs and integrate them into the `get` path.
-* Implement key-prefix compression in the SST block format.
-* Explain why both optimizations preserve correctness despite discarding lookup work or repeated bytes.
+* 为 SSTable 实现布隆过滤器，并把它们接入 `get` 路径。
+* 在 SSTable 块格式中实现键前缀压缩。
+* 解释为什么这两种优化在丢弃查找工作或重复字节之后，仍然保持正确性。
 
 
-To copy the test cases into the starter code and run them:
+把测试用例复制到起始代码并运行：
 
 ```
 cargo x copy-test --week 1 --day 7
 cargo x scheck
 ```
 
-## Before You Begin
+## 开始之前
 
-The engine completed in Day 6 is functionally correct. Today's changes must preserve its results while reducing I/O and storage space.
+第六天完成的引擎在功能上是正确的。今天的改动必须在减少 I/O 和存储空间的同时保持它的结果不变。
 
-Keep these invariants in mind:
+请记住这些不变量：
 
-1. A Bloom-filter negative result must be definitive: an SST skipped after a negative probe cannot contain the key. Positive results may be false and therefore still require a lookup.
-2. The builder and reader hash exactly the same key bytes with the same function.
-3. Prefix encoding followed by decoding reconstructs every original key exactly.
-4. Each compressed key is defined relative to the first key in its block, so it can be decoded without decoding every preceding entry.
-5. These optimizations may change I/O counts and encoded sizes, but never the key-value pairs returned by `get` or `scan`.
+1. 布隆过滤器的否定结果必须是确定的：在探测为否定之后被跳过的 SSTable 不可能包含该键。肯定结果可能是误判，因此仍然需要查找。
+2. 构建器和读取器用同一个函数对完全相同的键字节做哈希。
+3. 前缀编码之后再解码，能精确还原每一个原始键。
+4. 每个压缩后的键都相对于其所在块的首键定义，因此解码它不需要先解码前面每一个条目。
+5. 这些优化可以改变 I/O 次数和编码大小，但绝不改变 `get` 或 `scan` 返回的键值对。
 
-> **Predict before coding:** A Bloom filter returns “may contain” for a key that is absent from an SST. What extra work occurs, and why is the final result still correct? Now consider a filter that incorrectly returns “definitely absent” for a present key. Which storage-engine guarantee is violated?
+> **写代码前先预测：** 对一个并不存在于某个 SSTable 中的键，布隆过滤器返回「可能存在」。会多出哪些工作，为什么最终结果仍然正确？再考虑一个对存在的键错误返回「一定不存在」的过滤器。它违反了存储引擎的哪条保证？
 
-## Task 1: Bloom Filters
+## 任务 1：布隆过滤器
 
-A Bloom filter is a probabilistic data structure that represents set membership. After adding keys, you can ask whether a key may belong to the set or definitely does not belong to it. False positives are possible; false negatives are not.
+布隆过滤器是一种表示集合成员关系的概率数据结构。添加键之后，你可以询问某个键可能属于该集合，还是一定不属于。误判为存在（false positive）是可能的；漏判（false negative）不会发生。
 
-Constructing a Bloom filter requires hashing each key, usually to several bit positions. Consider the following example, in which each key has two hashes and the filter contains 7 bits:
+构建布隆过滤器需要对每个键做哈希，通常映射到多个位位置。考虑下面的例子，其中每个键有两个哈希值，过滤器包含 7 个位：
 
-For a more detailed introduction, see [Bloom Filters by Example](https://samwho.dev/bloom-filters/).
+更详细的介绍见 [Bloom Filters by Example](https://samwho.dev/bloom-filters/)。
 
 ```plaintext 
 hash1 = ((character - a) * 13) % 7
@@ -55,7 +55,7 @@ g -> 1 3
 h -> 0 0
 ```
 
-Inserting `b`, `c`, and `d` produces this filter:
+插入 `b`、`c` 和 `d` 之后，过滤器变为：
 
 ```
     bit  0123456
@@ -65,9 +65,9 @@ insert d     11
 result   0101111
 ```
 
-To probe the filter, hash the key and inspect the corresponding bits. If every bit is set, the key may belong to the original set. If any bit is clear, the key definitely does not belong to the set.
+探测过滤器时，对键做哈希并检查对应的位。如果所有位都已置位，该键可能属于原集合。如果任一位为 0，该键一定不属于该集合。
 
-For `e -> 3 2`, bit 2 is clear, so `e` is definitely absent. For `g -> 1 3`, both bits are set, so `g` may or may not be present. For `h -> 0 0`, the single referenced bit is clear, so `h` is definitely absent.
+对于 `e -> 3 2`，第 2 位为 0，因此 `e` 一定不存在。对于 `g -> 1 3`，两位都已置位，因此 `g` 可能存在，也可能不存在。对于 `h -> 0 0`，所引用的单个位为 0，因此 `h` 一定不存在。
 
 ```
 b -> maybe (actual: yes)
@@ -78,29 +78,29 @@ g -> maybe (actual: no)
 h -> MUST not (actual: no)
 ```
 
-In the previous chapter, you filtered SSTs by key range. On the `get` path, a Bloom filter can additionally exclude SSTs that definitely do not contain the requested key, reducing disk reads.
+上一章你按键范围过滤 SSTable。在 `get` 路径上，布隆过滤器还能额外排除一定不包含所请求键的 SSTable，从而减少磁盘读取。
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/table/bloom.rs
 ```
 
-Build the Bloom filter from `u32` key hashes. For each hash, set `k` bits using the following sequence:
+用 `u32` 键哈希构建布隆过滤器。对每个哈希，按下面的序列设置 `k` 个位：
 
 ```rust,no_run
-let delta = (h >> 17) | (h << 15); // h is the key hash
+let delta = (h >> 17) | (h << 15); // h 是键的哈希
 for _ in 0..k {
-    // TODO: use the hash to set the corresponding bit
+    // TODO: 用哈希置位对应的位
     h = h.wrapping_add(delta);
 }
 ```
 
-The starter code provides the remaining calculations. Implement the procedures for building and probing the filter.
+起始代码提供了其余计算。请实现构建和探测过滤器的过程。
 
-## Task 2: Integrate Bloom Filter on the Read Path
+## 任务 2：在读路径中接入布隆过滤器
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/table/builder.rs
@@ -108,7 +108,7 @@ src/table.rs
 src/lsm_storage.rs
 ```
 
-Append the encoded Bloom filter to the SST file and store its offset at the end. Account for that new section when reading the metadata offset.
+把编码后的布隆过滤器追加到 SSTable 文件末尾，并在最后保存它的偏移。读取元数据偏移时要考虑这个新段。
 
 ```plaintext
 -----------------------------------------------------------------------------------------------------
@@ -119,53 +119,53 @@ Append the encoded Bloom filter to the SST file and store its offset at the end.
 -----------------------------------------------------------------------------------------------------
 ```
 
-Use the `farmhash` crate to hash keys. While building the SST, compute each key's hash with `farmhash::fingerprint32`, then build and encode the Bloom filter. When opening an SST, decode both its block metadata and its Bloom filter. Use a false-positive rate of 0.01. Add fields to the provided structures as needed.
+用 `farmhash` crate 对键做哈希。构建 SSTable 时，用 `farmhash::fingerprint32` 计算每个键的哈希，然后构建并编码布隆过滤器。打开 SSTable 时，同时解码它的块元数据和布隆过滤器。误判率使用 0.01。按需为给定的结构添加字段。
 
-Then update the `get` path to filter SSTs with their Bloom filters.
+然后更新 `get` 路径，用布隆过滤器过滤 SSTable。
 
-There is no integration test specifically for this optimization, so ensure that all tests from earlier chapters still pass.
+这项优化没有专门的集成测试，因此请确保前面各章的测试仍然全部通过。
 
-## Task 3: Key Prefix Encoding + Decoding
+## 任务 3：键前缀编码与解码
 
-In this task, you will need to modify:
+本任务需要修改：
 
 ```
 src/block/builder.rs
 src/block/iterator.rs
 ```
 
-Because an SST stores keys in sorted order, nearby keys often share a prefix. Encoding that prefix only once can save space.
+由于 SSTable 按有序顺序存储键，相邻的键常常共享前缀。前缀只编码一次可以节省空间。
 
-Compare each key with the first key in its block, and encode it as follows:
+把每个键与它所在块的首键比较，并按下面的格式编码：
 
 ```
 key_overlap_len (u16) | rest_key_len (u16) | key (rest_key_len)
 ```
 
-`key_overlap_len` is the length of the shared prefix, in bytes. For example, if the first key is `mini-something`, the record `5|3|LSM` reconstructs the key `mini-LSM`.
+`key_overlap_len` 是共享前缀的字节长度。例如，如果首键是 `mini-something`，那么记录 `5|3|LSM` 还原出的键是 `mini-LSM`。
 
-After implementing the encoding, update the block iterator to reconstruct keys while decoding. Add fields to the provided structures as needed.
+实现编码之后，更新块迭代器，在解码时重建键。按需为给定的结构添加字段。
 
-## Chapter Checkpoint
+## 本章检查点
 
-Your Week 1 engine should now avoid many unnecessary SST reads on point lookups and avoid storing shared key-prefix bytes repeatedly. All tests from earlier chapters should continue to pass because neither optimization changes logical behavior.
+你第一周的引擎现在应在点查时避免大量不必要的 SSTable 读取，并避免重复存储共享的键前缀字节。前面各章的测试应继续全部通过，因为这两种优化都不改变逻辑行为。
 
-Measure or inspect three things: the encoded size of a block containing keys with a long shared prefix, the number of SST iterators created by a point lookup rejected by several Bloom filters, and the result of probing known-present and known-absent keys. Explain why each observation follows from the invariants above.
+测量或检查三件事：一个包含长共享前缀键的块的编码大小；一次被多个布隆过滤器拒绝的点查所创建的 SSTable 迭代器数量；对确定存在和确定不存在的键的探测结果。解释每项观察如何由上面的不变量推出。
 
-## Test Your Understanding
+## 检验你的理解
 
-### Correctness
+### 正确性
 
-* How does a Bloom filter help filter SSTs? Which claims can it make about a key: may not exist, may exist, must exist, or must not exist?
-* If we need a backward iterator, how does this key compression affect it?
-* Can Bloom filters help with scans?
+* 布隆过滤器如何帮助过滤 SSTable？关于一个键，它能给出哪些结论：可能不存在、可能存在、一定存在，还是一定不存在？
+* 如果我们需要反向迭代器，这种键压缩会带来什么影响？
+* 布隆过滤器对扫描有帮助吗？
 
-### Format and Design
+### 格式与设计
 
-* What are the advantages and disadvantages of prefix-encoding each key relative to the previous key rather than the first key in the block?
-* Why must the first key in a block have an overlap length of zero? What malformed or circular representation could result otherwise?
-* Compare the encoded sizes of keys that share a long prefix, keys that share no prefix, and one key larger than the target block size. When does prefix encoding provide little or no benefit?
+* 每个键相对于前一个键而不是相对于块首键做前缀编码，各有什么优缺点？
+* 块的首键为什么必须以 0 作为重叠长度？否则可能产生什么样的畸形或循环表示？
+* 比较共享长前缀的键、不共享前缀的键，以及一个大于目标块大小的键各自的编码大小。前缀编码在什么时候收益很小甚至没有收益？
 
-Use the [Week 1 end-of-week self-check](./week1-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs. You can also discuss them in the Discord community.
+用[第一周周末自检](./week1-overview.md#end-of-week-self-check)校验核心不变量。其余设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载和假设。你也可以在 Discord 社区讨论。
 
 {{#include copyright.md}}

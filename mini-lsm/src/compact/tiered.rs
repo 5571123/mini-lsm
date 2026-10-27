@@ -53,7 +53,7 @@ impl TieredCompactionController {
         if snapshot.levels.len() < self.options.num_tiers {
             return None;
         }
-        // compaction triggered by space amplification ratio
+        // 由空间放大率触发的压缩
         let mut size = 0;
         for id in 0..(snapshot.levels.len() - 1) {
             size += snapshot.levels[id].1.len();
@@ -71,7 +71,7 @@ impl TieredCompactionController {
             });
         }
         let size_ratio_trigger = (100.0 + self.options.size_ratio as f64) / 100.0;
-        // compaction triggered by size ratio
+        // 由大小比例触发的压缩
         let mut size = 0;
         for id in 0..(snapshot.levels.len() - 1) {
             size += snapshot.levels[id].1.len();
@@ -90,12 +90,12 @@ impl TieredCompactionController {
                         .take(id + 1)
                         .cloned()
                         .collect::<Vec<_>>(),
-                    // Size ratio trigger will never include the bottom level
+                    // 大小比例触发不会包含最底层
                     bottom_tier_included: false,
                 });
             }
         }
-        // trying to reduce sorted runs without respecting size ratio
+        // 不考虑大小比例，直接尝试减少有序段数量
         let num_tiers_to_take = snapshot
             .levels
             .len()
@@ -133,15 +133,15 @@ impl TieredCompactionController {
         let mut files_to_remove = Vec::new();
         for (tier_id, files) in &snapshot.levels {
             if let Some(ffiles) = tier_to_remove.remove(tier_id) {
-                // the tier should be removed
+                // 该层应该被移除
                 assert_eq!(ffiles, files, "file changed after issuing compaction task");
                 files_to_remove.extend(ffiles.iter().copied());
             } else {
-                // retain the tier
+                // 保留该层
                 levels.push((*tier_id, files.clone()));
             }
             if tier_to_remove.is_empty() && !new_tier_added && !output.is_empty() {
-                // add the compacted tier to the LSM tree
+                // 把压缩后的层加入 LSM 树
                 new_tier_added = true;
                 levels.push((output[0], output.to_vec()));
             }

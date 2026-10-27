@@ -24,7 +24,7 @@ use crate::iterators::two_merge_iterator::TwoMergeIterator;
 use crate::mem_table::MemTableIterator;
 use crate::table::SsTableIterator;
 
-/// Represents the internal type for an LSM iterator. This type will be changed across the course for multiple times.
+/// 表示 LSM 迭代器的内部类型。该类型会在课程中多次修改。
 type LsmIteratorInner = TwoMergeIterator<
     TwoMergeIterator<MergeIterator<MemTableIterator>, MergeIterator<SsTableIterator>>,
     MergeIterator<SstConcatIterator>,
@@ -133,9 +133,9 @@ impl StorageIterator for LsmIterator {
     }
 }
 
-/// A wrapper around existing iterator, will prevent users from calling `next` when the iterator is
-/// invalid. If an iterator is already invalid, `next` does not do anything. If `next` returns an error,
-/// `is_valid` should return false, and `next` should always return an error.
+/// 对已有迭代器的包装，用于阻止用户在迭代器无效时调用 `next`。
+/// 如果迭代器已经无效，`next` 不做任何事。如果 `next` 返回错误，
+/// `is_valid` 应返回 false，且 `next` 应始终返回错误。
 pub struct FusedIterator<I: StorageIterator> {
     iter: I,
     has_errored: bool,
@@ -175,7 +175,7 @@ impl<I: StorageIterator> StorageIterator for FusedIterator<I> {
     }
 
     fn next(&mut self) -> Result<()> {
-        // only move when the iterator is valid and not errored
+        // 只在迭代器有效且未出错时才向前移动
         if self.has_errored {
             bail!("the iterator is tainted");
         }

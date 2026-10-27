@@ -2,19 +2,19 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Snack Time: Compaction Filters
+# 加餐时间：压缩过滤器
 
-Congratulations! The engine now supports multi-version transactions. This final chapter generalizes version garbage collection into a user-installed compaction filter.
+恭喜！引擎现在支持多版本事务了。这最后一章把版本垃圾回收推广为用户可安装的压缩过滤器。
 
-By the end of this chapter, you will be able to:
+本章结束时，你将能够：
 
-* Apply a prefix filter while preserving versions above the watermark.
-* Remove the selected version and older versions of the same user key from one compaction output.
-* Explain why reads for a filtered key are intentionally undefined, including for an existing snapshot whose visible version is reclaimed.
+* 应用前缀过滤器，同时保留水位线之上的版本。
+* 在一次压缩输出中删除被选中的版本以及同一用户键更旧的版本。
+* 解释为什么对被过滤键的读取是有意未定义的，包括那些可见版本已被回收的既有快照。
 
-For now, our compaction will simply retain the keys above the watermark and the latest version of the keys below the watermark. We can add some magic to the compaction process to help the user collect some unused data automatically as a background job.
+目前，我们的压缩只是保留水位线之上的键，以及水位线之下键的最新版本。我们可以给压缩过程加入一些机制，帮用户把一些不再使用的数据作为后台任务自动回收。
 
-Consider a case that the user uses Mini-LSM to store database tables. Each row in the table are prefixed with the table name. For example,
+考虑这样一种情况：用户用 Mini-LSM 存储数据库表。表中的每一行都以表名作为前缀。例如，
 
 ```
 table1_key1 -> row
@@ -24,69 +24,69 @@ table2_key1 -> row
 table2_key2 -> row
 ```
 
-Now the user executes `DROP TABLE table1`. The engine will need to clean up all the data beginning with `table1`.
+现在用户执行 `DROP TABLE table1`。引擎需要清理所有以 `table1` 开头的数据。
 
-There are a lot of ways to achieve the goal. The user of Mini-LSM can scan all the keys beginning with `table1` and requests the engine to delete it. However, scanning a very large database might be slow, and it will generate the same number of delete tombstones as the existing keys. Therefore, scan-and-delete will not free up the space occupied by the dropped table -- instead, it will add more data to the engine and the space can only be reclaimed when the tombstones reach the bottom level of the engine.
+实现这个目标有很多方式。Mini-LSM 的用户可以扫描所有以 `table1` 开头的键，并请求引擎删除它们。然而，扫描一个非常大的数据库可能很慢，而且会产生与已有键数量相同的删除墓碑。因此，扫描并删除不会释放被删除表所占用的空间，反而会向引擎添加更多数据，而这些空间只有在墓碑到达引擎底层时才能被回收。
 
-Or, they can create column families (we will talk about this in *rest of your life* chapter). They store each table in a column family, which is a standalone LSM state, and directly remove the SST files corresponding to the column family when the user drop the table.
+或者，他们可以创建列族（column family）（我们会在*接下来做什么*一章中讨论）。他们把每张表存进一个列族，它是一个独立的 LSM 状态；用户删表时直接删除该列族对应的 SST 文件。
 
-In this course, we implement a third approach: compaction filters. A filter can be installed at runtime. During later compactions, matching keys become eligible for removal without first writing one tombstone per row. A `prefix=table1` filter therefore reclaims table 1 incrementally as compaction visits its files.
+本课程实现第三种方式：压缩过滤器。过滤器可以在运行时安装。在之后的压缩中，匹配的键可以在不先逐行写一个墓碑的情况下被删除。因此，一个 `prefix=table1` 过滤器会随着压缩访问相应文件而逐步回收表 1。
 
-## Before You Begin
+## 开始之前
 
-A compaction filter is a logical deletion policy, not merely a byte predicate. It must interact correctly with MVCC garbage collection.
+压缩过滤器是一种逻辑删除策略，而不只是一个字节谓词。它必须与 MVCC 垃圾回收正确配合。
 
-Keep these invariants in mind:
+请记住这些不变量：
 
-1. Versions above the watermark remain untouched, even when their user key matches the filter.
-2. When the first version at or below the watermark matches, omit it and every older version of that user key from the current compaction output.
-3. Non-matching keys follow the ordinary watermark and bottom-level tombstone rules.
-4. Files outside the compaction task may still contain older matching versions. Reads in a filtered prefix are therefore intentionally undefined until reclamation has propagated.
-5. Installing a filter does not synchronously free space; only compaction rewrites and removes the affected SSTs.
+1. 水位线之上的版本保持不动，即使它们的用户键匹配过滤器。
+2. 当第一个等于或低于水位线的版本匹配时，从当前压缩输出中省略它以及该用户键所有更旧的版本。
+3. 不匹配的键遵循普通的水位线与底层墓碑规则。
+4. 压缩任务之外的文件仍可能包含更旧的匹配版本。因此，在被过滤前缀中的读取在被回收过程传播到之前是有意未定义的。
+5. 安装过滤器不会同步释放空间；只有压缩才会重写并删除受影响的 SST。
 
-> **Predict before coding:** With watermark 5, a filtered key has `k@8=v8, k@5=v5, k@2=v2`. Which versions survive this compaction? What changes after the watermark advances to 8?
+> **先预测再写代码：** 在水位线 5 下，一个被过滤的键有 `k@8=v8, k@5=v5, k@2=v2`。这次压缩中哪些版本存活？水位线推进到 8 之后会有什么变化？
 
-## Task 1: Compaction Filter
+## 任务 1：压缩过滤器
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/compact.rs
 src/lsm_storage.rs
 ```
 
-Define `CompactionFilter::Prefix(Bytes)`, store installed filters in `LsmStorageInner`, and expose `add_compaction_filter` on the engine handle. Installing a filter only records policy for future compactions.
+定义 `CompactionFilter::Prefix(Bytes)`，把已安装的过滤器存放在 `LsmStorageInner` 中，并在引擎句柄上暴露 `add_compaction_filter`。安装过滤器只是为将来的压缩记录策略。
 
-Iterate the filters in `LsmStorageInner::compaction_filters`. If the first version of a key at or below the watermark matches, omit it and ensure that older versions of the same key are skipped as well.
+在 `LsmStorageInner::compaction_filters` 中遍历过滤器。如果某个键等于或低于水位线的第一个版本匹配，就省略它，并确保同一键更旧的版本也被跳过。
 
-To copy and run the test cases:
+复制并运行测试用例：
 
 ```
 cargo x copy-test --week 3 --day 7
 cargo x scheck
 ```
 
-You may assume that the user will not call `get` or scan within the filtered prefix. Such reads have undefined results because matching versions can disappear from some levels before others.
+你可以假定用户不会在被过滤的前缀内调用 `get` 或扫描。这类读取的结果是未定义的，因为匹配的版本可能先从某些层消失，而其他层尚未处理。
 
-## Chapter Checkpoint
+## 本章检查点
 
-Compaction should now reclaim filtered prefixes only as quickly as the watermark and selected compaction tasks permit. The filter is an explicit deletion policy, so the ordinary snapshot-preservation guarantee does not apply inside the matching prefix.
+现在压缩回收被过滤前缀的速度只取决于水位线和所选压缩任务。过滤器是一种显式的删除策略，因此在匹配前缀内部，普通的快照保留保证并不适用。
 
-Verify these cases explicitly:
+请显式验证这些情况：
 
-1. With watermark 5 and versions `k@8, k@5, k@2`, install a matching filter and compact; `k@8` remains, while `k@5` and `k@2` may disappear. Explain why a read at timestamp 5 is intentionally outside the contract.
-2. Advance the watermark to 8 and compact again; the matching version at 8 and its older history should disappear.
-3. Mix matching and non-matching keys, including tombstones, and confirm ordinary garbage collection still applies to the non-matching keys.
-4. Apply the filter in a non-bottom compaction and identify any older matching versions that remain outside the task.
+1. 在水位线 5、版本为 `k@8, k@5, k@2` 时，安装一个匹配的过滤器并压缩；`k@8` 保留，而 `k@5` 与 `k@2` 可能消失。解释为什么在时间戳 5 上的读取有意不在契约范围内。
+2. 把水位线推进到 8 并再次压缩；8 处的匹配版本及其更旧的历史应当消失。
+3. 混合匹配与不匹配的键，包括墓碑，确认普通的垃圾回收仍然作用于不匹配的键。
+4. 在非底层压缩中应用该过滤器，并指出任务之外仍然残留哪些更旧的匹配版本。
 
-## Test Your Understanding
+## 检验你的理解
 
-* Why is it unsafe to filter every matching version regardless of timestamp?
-* After filtering the first version at or below the watermark, why must compaction also skip older versions of that user key?
-* Why are reads inside the filtered prefix undefined before every relevant level has been compacted?
-* How would you report progress for a `DROP TABLE` operation backed by an asynchronous compaction filter?
-* What API or metadata would be needed to remove or supersede a previously installed filter safely?
+* 为什么不管时间戳、过滤掉每一个匹配版本是不安全的？
+* 过滤掉等于或低于水位线的第一个版本之后，为什么压缩还必须跳过该用户键更旧的版本？
+* 为什么在每个相关层都被压缩之前，被过滤前缀内部的读取是未定义的？
+* 你会如何为一个由异步压缩过滤器支撑的 `DROP TABLE` 操作报告进度？
+* 要安全地移除或替换一个先前安装的过滤器，需要什么 API 或元数据？
 
-Use the [Week 3 end-of-week self-check](./week3-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs. You can also discuss them in the Discord community.
+用[第三周周末自检](./week3-overview.md#end-of-week-self-check)来校准核心不变量。其余的设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载与假设。你也可以在 Discord 社区中讨论它们。
 
 {{#include copyright.md}}

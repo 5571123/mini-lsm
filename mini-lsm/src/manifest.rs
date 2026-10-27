@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -50,11 +50,16 @@ impl Manifest {
     }
 
     pub fn recover(path: impl AsRef<Path>) -> Result<(Self, Vec<ManifestRecord>)> {
-        let mut file = OpenOptions::new()
-            .read(true)
-            .append(true)
-            .open(path)
-            .context("failed to recover manifest")?;
+        let mut options = OpenOptions::new();
+        options.read(true);
+        // Unix 用 O_APPEND 保证追加写的原子性。Windows 下 O_APPEND 会去掉 FILE_WRITE_DATA 权限，
+        // 导致下面截断损坏尾部时 `set_len` 报「拒绝访问」，因此改用读写方式打开，
+        // 读完后再把游标移到文件末尾，让后续写入仍然表现为追加。
+        #[cfg(unix)]
+        options.append(true);
+        #[cfg(not(unix))]
+        options.write(true);
+        let mut file = options.open(path).context("failed to recover manifest")?;
         let mut buf = Vec::new();
         file.read_to_end(&mut buf)?;
         let mut records = Vec::new();
@@ -115,6 +120,8 @@ impl Manifest {
             file.sync_all()
                 .context("failed to sync truncated manifest tail")?;
         }
+        // 把游标放回文件末尾：Unix 下 O_APPEND 会忽略游标，Windows 下则靠它实现追加写。
+        file.seek(SeekFrom::End(0))?;
         Ok((
             Self {
                 file: Arc::new(Mutex::new(file)),

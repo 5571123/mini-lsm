@@ -248,7 +248,7 @@ fn test_task2_merge_error() {
         Box::new(i1),
         Box::new(i2),
     ]);
-    // your implementation should correctly throw an error instead of panic
+    // 你的实现应正确返回错误，而不是 panic
     expect_iter_error(iter);
 }
 

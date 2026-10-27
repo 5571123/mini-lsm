@@ -2,19 +2,19 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Week 3 Overview: Multi-Version Concurrency Control
+# 第三周概览：多版本并发控制
 
-In this part, you will implement multi-version concurrency control (MVCC) over the LSM engine from the previous two weeks. Internal keys will carry timestamps so that the engine can retain several versions of one user key. Reads will select a version from a stable timestamp, while compaction will reclaim versions only after no active reader needs them.
+在这一部分，你将在前两周的 LSM 引擎之上实现多版本并发控制（MVCC）。内部键会携带时间戳，因此引擎可以保留同一个用户键的多个版本。读操作会从一个稳定的时间戳选取版本，而压缩只会在没有活跃读操作需要某些版本之后才回收它们。
 
-The general approach of the MVCC part in this course is inspired and partially based on [BadgerDB](https://github.com/dgraph-io/badger).
+本课程 MVCC 部分的总体做法受 [BadgerDB](https://github.com/dgraph-io/badger) 启发，并部分基于它。
 
-The central representation is `user_key + timestamp (u64)`. Versions sort by user key and then by timestamp in descending order, so the newest version of one user key appears first. User-facing APIs hide this representation and expose a snapshot through a transaction.
+核心表示是 `user_key + timestamp (u64)`。版本先按键排序，再按时间戳降序排序，因此同一个用户键最新的版本排在最前面。面向用户的 API 隐藏这一表示，并通过事务暴露快照。
 
-Before MVCC, source priority determined which duplicate key was newest. With MVCC, the timestamp makes version order explicit. Source priority still matters when two sources contain the same internal key, but compaction must not collapse distinct timestamps merely because they share a user key. This course also preserves the invariant that newer sources remain above older sources when compaction does not include both.
+在 MVCC 之前，由来源优先级决定哪个重复键最新。使用 MVCC 之后，时间戳显式地给出每个版本的顺序。当两个来源含有相同的内部键时，来源优先级仍然有用，但压缩不能仅仅因为多个版本共享用户键就把它们合并掉。本课程还保留一个不变量：当压缩没有同时包含新、旧两个来源时，较新的来源仍然位于较旧的来源之上。
 
-An MVCC engine can assign timestamps itself or accept timestamps from a caller. Using BadgerDB's terminology, the mode that hides timestamps is **unmanaged mode**, while the mode that exposes timestamp control is **managed mode**.
+MVCC 引擎可以自己分配时间戳，也可以接受调用方传入的时间戳。沿用 BadgerDB 的术语，隐藏时间戳的模式称为**非托管模式**（unmanaged mode），暴露时间戳控制的模式称为**托管模式**（managed mode）。
 
-**Managed mode APIs**
+**托管模式 API**
 ```
 get(key, read_timestamp) -> (value, write_timestamp)
 scan(key_range, read_timestamp) -> iterator<key, value, write_timestamp>
@@ -24,7 +24,7 @@ write_batch(records, write_timestamp)
 set_watermark(timestamp)
 ```
 
-**Unmanaged mode APIs**
+**非托管模式 API**
 ```
 get(key) -> value
 scan(key_range) -> iterator<key, value>
@@ -35,105 +35,105 @@ txn.delete(key)
 txn.commit()
 ```
 
-Managed mode requires the caller to provide timestamps. They might come from a centralized timestamp service or an upstream log such as PostgreSQL logical replication. The caller must also advance a watermark that tells the engine which historical versions are no longer needed.
+托管模式要求调用方提供时间戳。它们可能来自集中式时间戳服务，也可能来自上游日志，例如 PostgreSQL 的逻辑复制。调用方还必须推进水位线，告诉引擎哪些历史版本已经不再需要。
 
-In unmanaged mode, the engine chooses timestamps. A transaction records the latest committed timestamp when it begins. Later commits remain invisible to that transaction, so every read observes the same logical snapshot.
+在非托管模式下，由引擎选择时间戳。事务开始时记录最新的已提交时间戳。此后的提交对该事务不可见，因此每次读操作观察到的都是同一个逻辑快照。
 
-## Separate the Guarantees
+## 分离各类保证
 
-MVCC is a mechanism for storing and selecting versions; by itself, it does not define all transaction guarantees. Keep these questions separate as you work through the week:
+MVCC 是存储和选取版本的机制；它本身并不定义全部事务保证。在本周的学习中，请把这些问题的答案分开看：
 
-1. **Version order:** Which versions exist, and how are they ordered in memtables and SSTs?
-2. **Snapshot visibility:** Given `read_ts`, which committed version may a read observe? A stable snapshot prevents later commits from appearing halfway through a transaction.
-3. **Atomic commit:** Do all writes in one transaction become visible together? Mini-LSM uses one commit timestamp for atomic visibility and one framed WAL batch for all-or-nothing recovery. These are related but distinct guarantees.
-4. **Durability:** After which synchronization point must a successful commit survive a crash? A well-framed WAL record can still be lost if it was not made durable.
-5. **Isolation:** Is the outcome of concurrent transactions equivalent to some serial order? Stable snapshots alone do not ensure this; write skew is a counterexample.
+1. **版本顺序：** 存在哪些版本，它们在内存表和 SST 中如何排序？
+2. **快照可见性：** 给定 `read_ts`，一次读操作可以观察到哪个已提交版本？稳定的快照能防止后续提交在事务执行到一半时突然出现。
+3. **原子提交：** 一个事务中的所有写入是否一起变得可见？Mini-LSM 用一个提交时间戳实现原子可见性，用一个成帧的 WAL 批次实现全有或全无的恢复。这两者相关，但是不同的保证。
+4. **持久性：** 一次成功的提交必须在哪个同步点之后仍然能经受崩溃？一个格式正确的 WAL 记录如果没有被持久化，仍然可能丢失。
+5. **隔离性：** 并发事务的执行结果是否等价于某个串行顺序？仅有稳定的快照并不能保证这一点；写偏斜（write skew）就是一个反例。
 
-Classic **snapshot isolation** gives each transaction the committed snapshot from its start, includes its own writes, and prevents two concurrent transactions that update the same item from both committing. Even with that write-write rule, transactions that write different items can produce write skew. See the background and write-skew example in [Serializable Isolation for Snapshot Databases](https://www.cs.cornell.edu/~sowell/dbpapers/serializable_isolation.pdf).
+经典的**快照隔离**让每个事务获得它开始时已提交的快照，包含它自己的写入，并阻止两个并发更新同一数据项的事务都提交。即使有这条写-写规则，写入不同数据项的事务仍然可能产生写偏斜。背景说明与写偏斜示例见 [Serializable Isolation for Snapshot Databases](https://www.cs.cornell.edu/~sowell/dbpapers/serializable_isolation.pdf)。
 
-Mini-LSM builds these properties incrementally. Days 1–4 implement version ordering, stable snapshots, and safe version reclamation. Day 5 adds a private workspace plus atomic visibility and crash-atomic WAL batches; it does not yet validate concurrent decisions. Day 6 adds conservative commit-time validation for point-key dependencies. Because scans record returned keys rather than the gaps in a range predicate, the completed exercise does **not** provide full serializability for scan-heavy workloads. This is a deliberate teaching boundary: Day 6 validates point-key dependencies, and scan-heavy workloads deliberately remain out of scope — recognizing that boundary is part of the lesson.
+Mini-LSM 逐步构建这些性质。第 1 天到第 4 天实现版本排序、稳定快照和安全回收版本。第 5 天加入私有工作区、原子可见性，以及崩溃时原子的 WAL 批次；此时还不校验并发决策。第 6 天为点键依赖加入保守的提交时校验。由于扫描记录的是返回的键，而不是范围谓词中的空隙，完整的练习**不会**为扫描密集的工作负载提供完整的可串行化。这是一个有意的教学边界：第 6 天校验点键依赖，扫描密集的工作负载被有意留在范围之外，认识到这条边界本身就是课程的一部分。
 
-The first three chapters refactor internal formats and finish snapshot reads. The remaining chapters track active snapshots, add transactional writes and validation, and reclaim obsolete data.
+前三章重构内部格式并完成快照读。后续章节跟踪活跃快照，加入事务写入与校验，并回收废弃的数据。
 
-| Chapter | Before | After |
+| 章节 | 开始前 | 完成后 |
 | --- | --- | --- |
-| [Day 1: Timestamp Key Refactor](./week3-01-ts-key-refactor.md) | Internal keys contain only user bytes. | Blocks, SST metadata, iterators, and memtables preserve descending timestamp order. |
-| [Day 2: Memtables and Timestamps](./week3-02-snapshot-read-part-1.md) | Most data still uses timestamp 0. | Writes receive one commit timestamp per batch and all versions survive compaction. |
-| [Day 3: Transaction API](./week3-03-snapshot-read-part-2.md) | Reads return only the newest global state. | Transactions select the newest visible version at a fixed read timestamp, including after recovery. |
-| [Day 4: Watermark and Garbage Collection](./week3-04-watermark.md) | Compaction retains every historical version. | Compaction retains exactly the versions active snapshots can still observe. |
-| [Day 5: Transaction Workspace and Atomic Commit](./week3-05-txn-occ.md) | Transaction writes are neither private nor crash-atomic. | A transaction reads its own workspace and commits one timestamped, framed WAL batch. |
-| [Day 6: Serializable Validation](./week3-06-serializable.md) | Stable snapshots still permit write skew. | Commit-time validation rejects read/write conflicts for tracked keys. |
-| [Day 7: Compaction Filters](./week3-07-compaction-filter.md) | Garbage collection is based only on version age. | User-installed filters can reclaim a logical key prefix during compaction. |
+| [第一天：时间戳键重构](./week3-01-ts-key-refactor.md) | 内部键只包含用户字节。 | 块、SST 元数据、迭代器和内存表都保持时间戳的降序。 |
+| [第二天：内存表与时间戳](./week3-02-snapshot-read-part-1.md) | 大多数数据仍然使用时间戳 0。 | 每个批次中的写入获得同一个提交时间戳，且所有版本在压缩后都保留。 |
+| [第三天：事务 API](./week3-03-snapshot-read-part-2.md) | 读操作只返回最新的全局状态。 | 事务在固定的读时间戳上选取最新的可见版本，恢复之后也是如此。 |
+| [第四天：水位线与垃圾回收](./week3-04-watermark.md) | 压缩保留每一个历史版本。 | 压缩只保留活跃快照仍然能观察到的那些版本。 |
+| [第五天：事务工作区与原子提交](./week3-05-txn-occ.md) | 事务写入既不私有，也不是崩溃原子的。 | 事务读取自己的工作区，并提交一个带时间戳、成帧的 WAL 批次。 |
+| [第六天：可串行化校验](./week3-06-serializable.md) | 稳定的快照仍然允许写偏斜。 | 提交时校验会拒绝被跟踪键上的读/写冲突。 |
+| [第七天：压缩过滤器](./week3-07-compaction-filter.md) | 垃圾回收只依据版本的年龄。 | 用户安装的过滤器可以在压缩期间回收某个逻辑键前缀。 |
 
-## How to Use This Week
+## 如何使用本周内容
 
-MVCC bugs often return a plausible value at the latest timestamp while breaking an older snapshot. For each chapter:
+MVCC 的缺陷常常表现为在最新时间戳上返回一个看起来合理的值，却破坏了较旧的快照。每一章的做法：
 
-1. Write down the internal order for two user keys with several timestamps.
-2. Trace one overwrite and one tombstone through a point read, a bounded scan, a flush, and a compaction.
-3. Keep one old transaction alive while newer batches commit, then repeat the read after flushing and compacting.
-4. For persistence changes, identify the durable source of the recovered commit timestamp and distinguish timestamp visibility from crash atomicity.
-5. For serializable validation, draw the dependency that should make a transaction abort and state which read or write set records it.
+1. 写下两个用户键、各含多个时间戳时的内部顺序。
+2. 跟踪一次覆盖写和一次删除标记依次经过点查、有界扫描、落盘和一次压缩。
+3. 在较新的批次提交时让一个旧事务保持存活，然后在落盘和压缩之后重复那次读操作。
+4. 对于持久化改动，找出恢复出的提交时间戳的持久化来源，并区分时间戳可见性与崩溃原子性。
+5. 对于可串行化校验，画出应当让事务中止的依赖关系，并说明哪一方的读集合或写集合记录了它。
 
-Before finishing Week 3, check that you can explain:
+结束第三周之前，确认你能解释：
 
-- why timestamps sort in descending order within one user key;
-- how included and excluded user-key bounds map to internal timestamp bounds;
-- which version a read at timestamp `T` returns when newer versions and tombstones exist;
-- why the watermark preserves one version at or below its value;
-- why a shared commit timestamp provides atomic visibility while a framed, checksummed WAL batch provides crash atomicity;
-- what anomaly commit-time validation prevents and which scan phantoms it does not prevent; and
-- why a compaction filter cannot blindly remove versions newer than the watermark.
+- 为什么在一个用户键内部，时间戳按降序排列；
+- 包含边界和不包含边界的用户键范围如何映射到内部时间戳边界；
+- 当存在更新的版本和删除标记时，在时间戳 `T` 上的读操作返回哪个版本；
+- 为什么水位线会保留一个等于或低于它取值的版本；
+- 为什么共享的提交时间戳提供原子可见性，而成帧且带校验和的 WAL 批次提供崩溃原子性；
+- 提交时校验能防止哪种异常，不能防止哪些扫描幻影；以及
+- 为什么压缩过滤器不能盲目删除比水位线更新的版本。
 
-## End-of-Week Self-Check
+## 周末自检
 
-For each scenario, name the relevant guarantee before answering. This is as important as computing the visible value.
+对每个场景，先说出相关的保证再作答。这与算出可见的值同样重要。
 
-### 1. Snapshot Visibility and Tombstones
+### 1. 快照可见性与删除标记
 
-The internal stream contains `k@9=delete, k@7=v7, k@3=v3`. What does a read return at timestamps 10, 8, 7, and 2?
+内部数据流包含 `k@9=delete, k@7=v7, k@3=v3`。在时间戳 10、8、7 和 2 上，读操作分别返回什么？
 
 <details>
 
-<summary>Answer criteria</summary>
+<summary>答案要点</summary>
 
-At 10, the newest visible version is the tombstone at 9, so the key is absent. At 8 and 7, `v7` is visible. At 2, no version is visible. A correct iterator skips versions newer than `read_ts`, chooses the first remaining version, and never continues past a chosen tombstone to resurrect an older value.
+在 10 上，最新的可见版本是 9 处的删除标记，因此该键不存在。在 8 和 7 上，`v7` 可见。在 2 上没有任何版本可见。正确的迭代器会跳过比 `read_ts` 更新的版本，选择剩余的第一个版本，并且绝不会越过一个已被选中的删除标记继续查找，从而复活一个更旧的值。
 
 </details>
 
-### 2. Watermark Garbage Collection
+### 2. 水位线垃圾回收
 
-For the same versions and watermark 7, which versions must a non-bottom compaction retain? What may a bottom-level compaction do after the watermark advances to 9?
+对于同样的版本和水位线 7，非底层压缩必须保留哪些版本？当水位线推进到 9 之后，底层压缩可以做什么？
 
 <details>
 
-<summary>Answer criteria</summary>
+<summary>答案要点</summary>
 
-At watermark 7, retain every version above it (`k@9`) and the newest version at or below it (`k@7`); `k@3` is obsolete. After the watermark reaches 9, a bottom-level compaction may remove the selected tombstone and all older versions because no active snapshot needs them and no older value can survive below the task.
+在水位线 7 时，保留它之上的每一个版本（`k@9`）以及等于或低于它的最新版本（`k@7`）；`k@3` 已经废弃。水位线到达 9 之后，底层压缩可以删除被选中的删除标记和所有更旧的版本，因为已经没有活跃快照需要它们，而且在该任务之下不可能有更旧的值存活。
 
 </details>
 
-### 3. Atomicity Is Not Durability or Serializability
+### 3. 原子性不是持久性，也不是可串行化
 
-One transaction writes `a` and `b`. Name what one shared commit timestamp guarantees, what one framed and checksummed WAL batch guarantees, and what `sync` adds. Do any of these alone prevent write skew?
+一个事务写入 `a` 和 `b`。说出一个共享的提交时间戳保证了什么，一个成帧且带校验和的 WAL 批次保证了什么，以及 `sync` 增加了什么。这些当中任何一个单独就能防止写偏斜吗？
 
 <details>
 
-<summary>Answer criteria</summary>
+<summary>答案要点</summary>
 
-The shared timestamp makes the completed batch visible as one logical version. WAL framing and verification prevent recovery from exposing only a prefix of a torn or corrupt batch. Synchronization establishes the point after which the record must survive a crash. None of these validates dependencies between concurrent transactions, so none alone prevents write skew.
+共享的时间戳让完成的批次作为一个逻辑版本变得可见。WAL 的成帧与校验防止恢复过程只暴露一个撕裂或损坏批次的前缀。同步确立了记录必须经受崩溃的那个时间点。这些都不会校验并发事务之间的依赖关系，因此任何一个单独都不能防止写偏斜。
 
 </details>
 
-### 4. Validation Scope
+### 4. 校验范围
 
-T1 and T2 begin at timestamp 10. T1 reads `b` and writes `a`; T2 reads `a` and writes `b`. T1 commits first. Why should T2 abort? Why can the same key-only scheme miss an insert into an empty scan range?
+T1 和 T2 都在时间戳 10 开始。T1 读取 `b` 并写入 `a`；T2 读取 `a` 并写入 `b`。T1 先提交。为什么 T2 应当中止？为什么同样这套只记录键的方案会漏掉向一个空扫描范围中的插入？
 
 <details>
 
-<summary>Answer criteria</summary>
+<summary>答案要点</summary>
 
-T1's committed write set contains `a`, which intersects T2's read set, so T2 must abort to break the write-skew execution. An empty range scan returns no keys to hash; an insertion into the gap therefore has no recorded key intersection. Preventing that phantom requires tracking the predicate or key range, not only returned keys.
+T1 已提交的写集合包含 `a`，它与 T2 的读集合相交，因此 T2 必须中止，才能打断这次写偏斜执行。空的范围扫描没有返回任何键可供哈希，因此向空隙中的插入不会产生记录到的键交集。要防止这种幻影，需要跟踪谓词或键范围，而不只是返回的键。
 
 </details>
 

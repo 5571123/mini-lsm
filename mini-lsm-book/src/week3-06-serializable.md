@@ -2,48 +2,48 @@
   mini-lsm-book © 2022-2026 by Alex Chi Z is licensed under CC BY-NC-SA 4.0
 -->
 
-# Serializable Validation (with a Scan Limitation)
+# 可串行化校验（含扫描限制）
 
-By the end of this chapter, you will be able to:
+本章结束时，你将能够：
 
-* Detect a tracked read/write dependency against transactions committed after a snapshot began.
-* Serialize validation and publication under one commit lock.
-* Explain why key-only scan tracking does not prevent phantom anomalies.
+* 检测被跟踪的读/写依赖与快照开始之后提交的事务之间的冲突。
+* 在同一把提交锁下完成校验与发布的串行化。
+* 解释为什么只记录键的扫描跟踪无法防止幻影异常。
 
-To copy and run the test cases:
+复制并运行测试用例：
 
 ```
 cargo x copy-test --week 3 --day 6
 cargo x scheck
 ```
 
-## Before You Begin
+## 开始之前
 
-Day 5 provides stable snapshots and crash-atomic writes, but two transactions can still make decisions from the same old state and produce write skew. Day 6 validates a transaction immediately before commit.
+第五天提供了稳定的快照和崩溃时原子的写入，但两个事务仍然可能基于同一份旧状态做出决策，产生写偏斜。第六天在提交之前立即对事务做校验。
 
-This chapter does not implement the full Serializable Snapshot Isolation (SSI) algorithm from the research literature. For point reads, it uses a simpler and more conservative rule: abort when the current transaction's read set intersects the write set of any transaction committed after its snapshot. Holding one commit lock across validation and publication lets each accepted writing transaction be serialized at its commit position; read-only transactions remain at their snapshot position. The rule may reject some histories that were already serializable. For scans, recording only returned keys misses gaps and therefore cannot provide the same guarantee.
+本章不实现研究文献中完整的可串行化快照隔离（SSI）算法。对于点读，它使用一条更简单也更保守的规则：如果当前事务的读集合与任何在其快照之后提交的事务的写集合相交，就中止。在校验和发布期间持有同一把提交锁，使得每个被接受的写事务都在其提交位置上串行化；只读事务则停留在其快照位置上。这条规则可能拒绝一些本来就已经可串行化的历史。对于扫描，只记录返回的键会漏掉空隙，因此无法提供同样的保证。
 
-Keep these invariants in mind:
+请记住这些不变量：
 
-1. Validation and write publication happen under `commit_lock`, so no transaction can commit between the check and the write.
-2. For a transaction at `read_ts`, compare its read set with the write sets committed after `read_ts` and before its own publication.
-3. Record a point-read key even when `get` returns `None`; the absence influenced the transaction.
-4. A failed validation publishes no data and no committed write-set record.
-5. Transactions with an empty write set skip conflict validation; optimizing their timestamp and metadata path is a bonus task.
-6. Recording only keys returned by a scan does not record gaps, so inserts into those gaps can create phantoms.
+1. 校验和写入发布都在 `commit_lock` 下完成，因此在检查和写入之间没有事务能够提交。
+2. 对于处在 `read_ts` 的事务，把它的读集合与 `read_ts` 之后、它自己发布之前提交的写集合比较。
+3. 即使 `get` 返回 `None`，也要记录这个点读的键；这个不存在本身影响了该事务。
+4. 校验失败时不发布任何数据，也不记录任何已提交写集合。
+5. 写集合为空的事务跳过冲突校验；优化它们的时间戳和元数据路径是一项加分任务。
+6. 只记录扫描返回的键不会记录空隙，因此向这些空隙中的插入可能造成幻影。
 
-> **Predict before coding:** Two transactions begin at timestamp 10. T1 reads `b` and writes `a`; T2 reads `a` and writes `b`. T1 commits at 11. Which set intersection must abort T2? How would the answer change if T2's dependency came only from an empty range scan?
+> **先预测再写代码：** 两个事务都在时间戳 10 开始。T1 读取 `b` 并写入 `a`；T2 读取 `a` 并写入 `b`。T1 在 11 提交。哪个集合相交必须让 T2 中止？如果 T2 的依赖只来自一次空的范围扫描，答案会如何变化？
 
-Let us go through an example of serializable. Consider that we have two transactions in the engine that:
+我们来看一个可串行化的例子。假设引擎中有两个事务：
 
 ```
 txn1: put("key1", get("key2"))
 txn2: put("key2", get("key1"))
 ```
 
-The initial state of the database is `key1=1, key2=2`. Serializable means that the outcome of the execution has the same result of executing the transactions one by one in serial in some order. If we execute txn1 then txn2, we will get `key1=2, key2=2`. If we execute txn2 then txn1, we will get `key1=1, key2=1`.
+数据库的初始状态是 `key1=1, key2=2`。可串行化意味着执行结果与按某种顺序逐个串行执行这些事务的结果相同。如果先执行 txn1 再执行 txn2，我们得到 `key1=2, key2=2`。如果先执行 txn2 再执行 txn1，我们得到 `key1=1, key2=1`。
 
-However, with our current implementation, if the execution of these two transactions overlaps:
+然而，用我们目前的实现，如果这两个事务的执行重叠：
 
 ```
 txn1: get key2 <- 2
@@ -52,13 +52,13 @@ txn1: put key1=2, commit
 txn2: put key2=1, commit
 ```
 
-We will get `key1=2, key2=1`. This cannot be produced with a serial execution of these two transactions. This phenomenon is called write skew.
+我们会得到 `key1=2, key2=1`。这无法通过这两个事务的任何串行执行产生。这种现象称为写偏斜。
 
-With serializable validation, we can ensure the modifications to the database corresponds to a serial execution order, and therefore, users may run some critical workloads over the system that requires serializable execution. For example, if a user runs bank transfer workloads on Mini-LSM, they would expect the sum of money at any point of time is the same. We cannot guarantee this invariant without serializable checks. 
+通过可串行化校验，我们可以确保对数据库的修改对应于某个串行执行顺序，因此用户可以在系统上运行一些需要可串行化执行的关键工作负载。例如，如果用户在 Mini-LSM 上运行银行转账工作负载，他们会期望任意时刻的金额总和保持不变。没有可串行化校验，我们无法保证这个不变量。
 
-One technique of serializable validation is to record read set and write set of each transaction in the system. We do the validation before committing a transaction (optimistic concurrency control). If the read set of the transaction overlaps with any transaction committed after its read timestamp, then we fail the validation, and abort the transaction.
+可串行化校验的一种技术是记录系统中每个事务的读集合和写集合。我们在提交事务之前做校验（乐观并发控制）。如果该事务的读集合与任何在其读时间戳之后提交的事务重叠，我们就让校验失败并中止该事务。
 
-Back to the above example, if we have txn1 and txn2 both started at timestamp = 1.
+回到上面的例子，假设 txn1 和 txn2 都在 timestamp = 1 开始。
 
 ```
 txn1: get key2 <- 2
@@ -67,39 +67,39 @@ txn1: put key1=2, commit ts = 2
 txn2: put key2=1, start serializable verification
 ```
 
-When we validate txn2, we will go through all transactions started before the expected commit timestamp of itself and after its read timestamp (in this case, 1 < ts < 3). The only transaction satisfying the criteria is txn1. The write set of txn1 is `key1`, and the read set of txn2 is `key1`. As they overlap, we should abort txn2.
+校验 txn2 时，我们会遍历所有在它预期的提交时间戳之前开始、且在它的读时间戳之后提交的事务（在本例中满足 1 < ts < 3）。唯一满足条件的事务是 txn1。txn1 的写集合是 `key1`，txn2 的读集合是 `key1`。由于它们重叠，我们应当中止 txn2。
 
-## Task 1: Track Read Set in Get and Write Set
+## 任务 1：在读取中跟踪读集合与写集合
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/mvcc/txn.rs
 src/mvcc.rs
 ```
 
-When `get` is called, you should add the key to the read set of the transaction. In our implementation, we store the hashes of the keys, so as to reduce memory usage and make probing the read set faster, though this might cause false positives when two keys have the same hash. You can use `farmhash::hash32` to generate the hash for a key. Note that even if `get` returns a key is not found, this key should still be tracked in the read set.
+调用 `get` 时，你应当把该键加入事务的读集合。在我们的实现中，我们存储键的哈希，以减少内存占用并加快读集合的探查，不过这也可能在两个键哈希相同时造成误报。你可以用 `farmhash::hash32` 为键生成哈希。注意，即使 `get` 表示没有找到某个键，该键仍然应当被记录在读集合中。
 
-In `LsmMvccInner::new_txn`, you should create an empty read/write set for the transaction if `serializable=true`.
+在 `LsmMvccInner::new_txn` 中，如果 `serializable=true`，你应当为该事务创建一个空的读/写集合。
 
-## Task 2: Track Read Set in Scan
+## 任务 2：在扫描中跟踪读集合
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/mvcc/txn.rs
 ```
 
-In this course, we only guarantee full serializability for `get` requests. You still need to track the read set for scans, but in some specific cases, you might still get non-serializable result.
+本课程只为 `get` 请求保证完整的可串行化。你仍然需要为扫描跟踪读集合，但在某些特定情况下，你可能仍然会得到不可串行化的结果。
 
-To understand why this is hard, let us go through the following example.
+为了理解这件事为什么困难，我们来看下面的例子。
 
 ```
 txn1: put("key1", len(scan(..)))
 txn2: put("key2", len(scan(..)))
 ```
 
-If the database starts with an initial state of `a=1,b=2`, we should get either `a=1,b=2,key1=2,key2=3` or `a=1,b=2,key1=3,key2=2`. However, if the transaction execution is as follows:
+如果数据库的初始状态是 `a=1,b=2`，我们应当得到 `a=1,b=2,key1=2,key2=3` 或 `a=1,b=2,key1=3,key2=2` 之一。然而，如果事务的执行如下：
 
 ```
 txn1: len(scan(..)) = 2
@@ -108,62 +108,62 @@ txn1: put key1 = 2, commit, read set = {a, b}, write set = {key1}
 txn2: put key2 = 2, commit, read set = {a, b}, write set = {key2}
 ```
 
-This passes our serializable validation and does not correspond to any serial order of execution! Therefore, a fully-working serializable validation will need to track key ranges, and using key hashes can accelerate the serializable check if only `get` is called. Please refer to the bonus tasks on how you can implement serializable checks correctly.
+这通过了我们的可串行化校验，却不对应任何串行执行顺序！因此，一个完全可用的可串行化校验需要跟踪键范围，而如果只调用 `get`，使用键哈希可以加速可串行化检查。关于如何正确实现可串行化检查，请参考加分任务。
 
-## Task 3: Engine Interface and Serializable Validation
+## 任务 3：引擎接口与可串行化校验
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/mvcc/txn.rs
 src/lsm_storage.rs
 ```
 
-Implement validation in the commit phase. Hold `commit_lock` across validation, timestamp allocation, write publication, and insertion into `committed_txns`.
+在提交阶段实现校验。在校验、时间戳分配、写入发布以及插入 `committed_txns` 的整个过程中持有 `commit_lock`。
 
-You will need to go through all transactions with commit timestamp within range `(read_ts, expected_commit_ts)` (both excluded bounds), and see if the read set of the current transaction overlaps with the write set of any transaction satisfying the criteria. If we can commit the transaction, submit a write batch, and insert the write set of this transaction into `self.inner.mvcc().committed_txns`, where the key is the commit timestamp.
+你需要遍历所有提交时间戳落在 `(read_ts, expected_commit_ts)` 范围内（两端都不包含）的事务，检查当前事务的读集合是否与任何满足条件的事务的写集合重叠。如果可以提交该事务，就提交一个写批次，并把该事务的写集合插入 `self.inner.mvcc().committed_txns`，其中键是提交时间戳。
 
-Skip validation if `write_set` is empty. If the transaction's write batch is empty, return successfully without allocating a commit timestamp or retaining committed-transaction metadata.
+如果 `write_set` 为空，跳过校验。如果事务的写批次为空，直接成功返回，不分配提交时间戳，也不保留已提交事务的元数据。
 
-You should also modify the `put`, `delete`, and `write_batch` interface in `LsmStorageInner`. We recommend you define a helper function `write_batch_inner` that processes a write batch. If `options.serializable = true`, `put`, `delete`, and the user-facing `write_batch` should create a transaction instead of directly creating a write batch. Your write batch helper function should also return a `u64` commit timestamp so that `Transaction::Commit` can correctly store the committed transaction data into the MVCC structure.
+你还应当修改 `LsmStorageInner` 中的 `put`、`delete` 和 `write_batch` 接口。我们建议你定义一个辅助函数 `write_batch_inner` 来处理写批次。如果 `options.serializable = true`，`put`、`delete` 和面向用户的 `write_batch` 应当创建事务，而不是直接创建写批次。你的写批次辅助函数还应当返回一个 `u64` 提交时间戳，以便 `Transaction::Commit` 能正确地把已提交事务的数据存入 MVCC 结构。
 
-## Task 4: Garbage Collection
+## 任务 4：垃圾回收
 
-In this task, you will need to modify:
+在这个任务中，你需要修改：
 
 ```
 src/mvcc/txn.rs
 ```
 
-After a successful write transaction commits, remove committed transaction records strictly below the watermark; no future transaction can have an older active `read_ts`.
+写事务成功提交之后，删除严格低于水位线的已提交事务记录；将来不会有任何事务拥有更旧的活跃 `read_ts`。
 
-## Chapter Checkpoint
+## 本章检查点
 
-Point-read dependencies should now produce an execution equivalent to commit order, while the documented scan-phantom limitation remains visible.
+现在点读依赖应当产生一个等价于提交顺序的执行结果，而文档中说明的扫描幻影限制依然可见。
 
-Verify these cases explicitly:
+请显式验证这些情况：
 
-1. Reproduce write skew and confirm exactly one of the overlapping transactions aborts.
-2. Read a missing key, let another transaction insert it, then attempt to commit a dependent write from the first transaction.
-3. Confirm that disjoint read and write sets both commit, and that two blind writes to the same key can serialize by commit order.
-4. Run the scan-phantom example and explain why returned-key hashes cannot represent the missing predicate.
-5. Keep the oldest transaction alive and confirm committed write-set metadata is retained until its watermark advances.
+1. 复现写偏斜，确认重叠的事务中恰好有一个中止。
+2. 读取一个不存在的键，让另一个事务插入它，然后尝试提交第一个事务中依赖该键的写入。
+3. 确认读集合与写集合不相交的事务都能提交，并且对同一个键的两次盲目写入可以按提交顺序串行化。
+4. 运行扫描幻影的例子，解释为什么返回键的哈希无法表示缺失的谓词。
+5. 让最旧的事务保持存活，确认已提交写集合的元数据一直保留，直到水位线推进。
 
-## Test Your Understanding
+## 检验你的理解
 
-* If you have some experience with building a relational database, you may think about the following question: assume that we build a database based on Mini-LSM where we store each row in the relation table as a key-value pair (key: primary key, value: serialized row) and enable serializable verification, does the database system directly gain ANSI serializable isolation level capability? Why or why not?
-* The point-key rule is related to write snapshot isolation (see [A critique of snapshot isolation](https://dl.acm.org/doi/abs/10.1145/2168836.2168853)): it aborts on any relevant read-after-snapshot write conflict instead of detecting only cycles. Construct a serializable execution that this conservative rule still rejects.
-* There are databases that claim they have serializable snapshot isolation support by only tracking the keys accessed in gets and scans (instead of key range). Do they really prevent write skews caused by phantoms? (Okay... Actually, I'm talking about [BadgerDB](https://github.com/dgraph-io/badger).)
-* Why must `commit_lock` cover both validation and publication? Construct an interleaving that fails if the lock is released between them.
-* Why does a `get` miss belong in the read set?
-* Why can two transactions that only write the same key both commit without violating serializability?
-* Which committed transaction records are safe to garbage-collect at a given watermark?
+* 如果你有一些构建关系数据库的经验，可能会想到这个问题：假设我们基于 Mini-LSM 构建一个数据库，把关系表中的每一行存为一个键值对（键：主键，值：序列化后的行），并启用可串行化校验，这个数据库系统是否就直接获得了 ANSI 的可串行化隔离级别？为什么是或不是？
+* 点键规则与写偏斜快照隔离有关（见 [A critique of snapshot isolation](https://dl.acm.org/doi/abs/10.1145/2168836.2168853)）：它对任何相关的「快照后写入」冲突都中止，而不是只检测环。构造一个这条保守规则仍然会拒绝的可串行化执行。
+* 有些数据库声称，只跟踪 get 和 scan 中访问的键（而不是键范围）就支持可串行化快照隔离。它们真的能防止幻影引起的写偏斜吗？（好吧……其实我说的是 [BadgerDB](https://github.com/dgraph-io/badger)。）
+* 为什么 `commit_lock` 必须同时覆盖校验和发布？构造一个在两步之间释放锁就会失败的交替执行。
+* 为什么 `get` 的未命中应当进入读集合？
+* 为什么两个只写同一个键的事务可以都提交而不违反可串行化？
+* 在给定的水位线下，哪些已提交事务记录可以安全地垃圾回收？
 
-Use the [Week 3 end-of-week self-check](./week3-overview.md#end-of-week-self-check) to calibrate the core invariants. The remaining design questions may have several defensible answers; state your workload and assumptions before comparing tradeoffs. You can also discuss them in the Discord community.
+用[第三周周末自检](./week3-overview.md#end-of-week-self-check)来校准核心不变量。其余的设计问题可能有多个站得住脚的答案；在比较取舍之前，先说明你的工作负载与假设。你也可以在 Discord 社区中讨论它们。
 
-## Bonus Tasks
+## 加分任务
 
-* **Read-Only Fast Path.** Detect an empty transaction before acquiring `commit_lock`. The required implementation already avoids allocating a commit timestamp or retaining an empty validation record, but it may still serialize briefly with writers before discovering that the batch is empty.
-* **Precision/Predicate Locking.** The read set can be maintained using a range instead of a single key. This would be useful when a user scans the full key space. This will also enable serializable verification for scan.
+* **只读快路径。** 在获取 `commit_lock` 之前检测空事务。所需的实现已经避免分配提交时间戳或保留空的校验记录，但在发现批次为空之前，它可能仍会与写者短暂串行化。
+* **精确锁定/谓词锁定。** 读集合可以用一个范围而不是单个键来维护。当用户扫描整个键空间时这会很有用。这也能为扫描启用可串行化校验。
 
 {{#include copyright.md}}

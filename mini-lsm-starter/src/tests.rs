@@ -12,5 +12,5 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! DO NOT MODIFY -- Mini-LSM tests modules
-//! This file will be automatically rewritten by the copy-test command.
+//! 不要修改 —— Mini-LSM 测试模块
+//! 该文件会被 copy-test 命令自动重写。
