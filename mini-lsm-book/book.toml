@@ -11,7 +11,7 @@ renderer = ["html"]
 
 [output.html]
 additional-css = ["custom.css"]
-git-repository-url = "https://github.com/skyzh/mini-lsm"
+git-repository-url = "https://github.com/5571123/mini-lsm"
 
 [output.html.redirect]
 "/00-v1.html" = "00-overview.html"
